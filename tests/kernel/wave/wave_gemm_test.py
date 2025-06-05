@@ -936,9 +936,17 @@ def testCDNA3IntGemm(
         MMAType.F32_32x32x16_K4_F8,
     ],
 )
+@param_bool("transpose_b")
 def testF8Gemm(
-    shape: tuple[int], enable_scheduling: SchedulingType, mfma_variant: MMAType, request
+    shape: tuple[int],
+    enable_scheduling: SchedulingType,
+    mfma_variant: MMAType,
+    transpose_b: bool,
+    request,
 ):
+
+    if transpose_b and enable_scheduling != SchedulingType.NONE:
+        pytest.skip("scheduling doesn't work with mapping")
     run_bench = request.config.getoption("--runperf")
     dump_perf = request.config.getoption("--dump-perf-files-path")
     # Input sizes
@@ -965,29 +973,60 @@ def testF8Gemm(
         )
     ]
 
-    @tkw.wave(constraints)
-    def gemm(
-        a: tkl.Memory[M, K, ADDRESS_SPACE, tkl.f16],
-        b: tkl.Memory[N, K, ADDRESS_SPACE, tkl.f16],
-        c: tkl.Memory[M, N, GLOBAL_ADDRESS_SPACE, tkl.f32],
-    ):
+    i = tkw.IndexMapping.iterator(0)
+    j = tkw.IndexMapping.iterator(1)
+
+    b_mapping = tkw.IndexMapping(
+        num_iterators=2,
+        inputs={N: i, K: j},
+        outputs={N: i, K: j},
+    )
+
+    def gemm_body(a, b, c):
         c_reg = tkl.Register[M, N, tkl.f32](0.0)
 
+        # This microkernel encodes the fact that if the iterate
+        # dimension were tiled, then we would need to materialize a loop.
         @tkw.iterate(K, init_args=[c_reg])
         def repeat(acc: tkl.Register[M, N, tkl.f32]) -> tkl.Register[M, N, tkl.f32]:
             a_reg = tkw.read(a)
             a_reg = tkw.cast(a_reg, tkl.f8e4m3fnuz)
-            b_reg = tkw.read(b)
+            b_reg = tkw.read(b, mapping=b_mapping)
             b_reg = tkw.cast(b_reg, tkl.f8e4m3fnuz)
             acc = tkw.mma(a_reg, b_reg, acc)
             return acc
 
+        # repeat represents the results of the loop
         tkw.write(repeat, c)
+
+    if transpose_b:
+
+        @tkw.wave(constraints)
+        def gemm(
+            a: tkl.Memory[M, K, ADDRESS_SPACE, tkl.f16],
+            b: tkl.Memory[K, N, ADDRESS_SPACE, tkl.f16],
+            c: tkl.Memory[M, N, GLOBAL_ADDRESS_SPACE, tkl.f32],
+        ):
+            gemm_body(a, b, c)
+
+    else:
+
+        @tkw.wave(constraints)
+        def gemm(
+            a: tkl.Memory[M, K, ADDRESS_SPACE, tkl.f16],
+            b: tkl.Memory[N, K, ADDRESS_SPACE, tkl.f16],
+            c: tkl.Memory[M, N, GLOBAL_ADDRESS_SPACE, tkl.f32],
+        ):
+            gemm_body(a, b, c)
+
+    block_n = (
+        128 if transpose_b else 64
+    )  # bigger tile size for in-thread transpose to kick-in
 
     hyperparams = {
         ADDRESS_SPACE: SHARED_ADDRESS_SPACE,
         BLOCK_M: 64,
-        BLOCK_N: 64,
+        BLOCK_N: block_n,
         BLOCK_K: 32,
         M: shape[0],
         N: shape[1],
@@ -1015,7 +1054,11 @@ def testF8Gemm(
     a = device_randn(shape[0], shape[2], dtype=torch.float16)
     b = device_randn(shape[1], shape[2], dtype=torch.float16)
     c = device_zeros(shape[0], shape[1], dtype=torch.float32)
-    asm = gemm(a, b, c)
+
+    b_kernel = b
+    if transpose_b:
+        b_kernel = b.T.contiguous()
+    asm = gemm(a, b_kernel, c)
 
     if dump_generated_mlir:
         filename = f"wave_gemm_{'x'.join(map(str, shape))}_f8.mlir"

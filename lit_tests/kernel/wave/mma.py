@@ -385,3 +385,62 @@ def test_mma_16x16x32():
     # CHECK-SAME:         vector<4xf32> to vector<1xf32>
 
     # CHECK-COUNT-4:    vector.store
+
+
+@run_test
+def test_mma_16x16x32_transpose():
+    constraints: list[tkw.Constraint] = [tkw.WorkgroupConstraint(M, BLOCK_M, 0)]
+    constraints += [tkw.WorkgroupConstraint(N, BLOCK_N, 1)]
+    constraints += [tkw.WaveConstraint(M, BLOCK_M / 2)]
+    constraints += [tkw.WaveConstraint(N, BLOCK_N / 2)]
+
+    constraints += [
+        tkw.HardwareConstraint(
+            threads_per_wave=64,
+            waves_per_block=(2, 2, 1),
+            mma_type=tkw.MMAType.F32_16x16x32_F8,
+        )
+    ]
+
+    i = tkw.IndexMapping.iterator(0)
+    j = tkw.IndexMapping.iterator(1)
+
+    # Mapping to handle transpose of b.
+    b_mapping = tkw.IndexMapping(
+        num_iterators=2,
+        inputs={N: i, K: j},
+        outputs={N: i, K: j},
+    )
+
+    @tkw.wave(constraints)
+    def mma_16x16x32(
+        a: tkl.Memory[M, K, ADDRESS_SPACE, tkl.f8e4m3fnuz],
+        b: tkl.Memory[K, N, ADDRESS_SPACE, tkl.f8e4m3fnuz],
+        c: tkl.Memory[M, N, ADDRESS_SPACE_0, tkl.f32],
+    ):
+        c_reg = tkl.Register[M, N, tkl.f32](0.0)
+        a_reg = tkw.read(a, elements_per_thread=LOAD_ELEMS_PER_THREAD)
+        b_reg = tkw.read(
+            b, elements_per_thread=LOAD_ELEMS_PER_THREAD, mapping=b_mapping
+        )
+        acc = tkw.mma(a_reg, b_reg, c_reg)
+        tkw.write(acc, c, elements_per_thread=STORE_ELEMS_PER_THREAD)
+
+    compile_options = WaveCompileOptions(
+        subs={
+            M: 128,
+            N: 128,
+            K: 32,
+            BLOCK_M: 32,
+            BLOCK_N: 32,
+            LOAD_ELEMS_PER_THREAD: 8,
+            STORE_ELEMS_PER_THREAD: 4,
+            ADDRESS_SPACE: SHARED_ADDRESS_SPACE,
+            ADDRESS_SPACE_0: GLOBAL_ADDRESS_SPACE,
+        },
+        canonicalize=True,
+        compile_to_mlir=True,
+    )
+    mma_16x16x32 = wave_compile(compile_options, mma_16x16x32)
+    print(mma_16x16x32.asm)
+    breakpoint()
