@@ -33,9 +33,16 @@ from .minimize_global_loads import (
 )
 from .global_to_shared_gathers import update_read_mapping_dynamic_values
 from ..ops.wave_ops import Extract, Read, Write, Reshape
+from ..wave.utils.classes import LDSTransposeRead
+from ..wave.utils.run_utils import get_default_arch
 import logging
 
 logger = logging.getLogger(__name__)
+
+"""
+Optimize shared -> reg for transpose using lds.tr{n} intrinsics
+TODO: extend support for more variants
+"""
 
 
 def is_transpose_read(node: fx.Node) -> bool:
@@ -50,6 +57,24 @@ def is_transpose_read(node: fx.Node) -> bool:
     return is_transposed_read(read)
 
 
+def meets_hw_transpose_requirements(read: Read, write: Write):
+    if not get_default_arch() == "gfx942":
+        breakpoint()
+        return False
+
+    write_memory = get_custom(write.memory)
+    if write_memory.type.address_space != SHARED_ADDRESS_SPACE:
+        return False
+
+    if read.mapping_dynamic_vals:
+        return False
+
+    if read.type.dtype.bitwidth() != 8:
+        return False
+
+    return True
+
+
 def mark_hardware_transpose_candidates(
     trace: CapturedTrace, constraints: list[Constraint]
 ):
@@ -58,45 +83,32 @@ def mark_hardware_transpose_candidates(
     This is separate from in_thread_transpose optimization.
     """
     logger.info("mark_hardware_transpose_candidates")
-
-    #   hardware_constraint = get_hardware_constraint(constraints)
-
-    #          logger.info("Hardware transpose not supported on this architecture")
-    #          return
-
-    # Find transpose read patterns
     candidates = trace.walk(is_transpose_read)
-    #   breakpoint()
 
-    # Build read-write pairs (similar to in_thread_transpose)
-    mem_to_read_write = defaultdict(list)
+    rw_mem_seen = set()
+    new_writes = defaultdict(list)
+
     for read in candidates:
         read = get_custom(read)
         for write in read.users:
             if not isinstance(write, Write):
                 continue
-            mem_to_read_write[(read.memory, write.memory)].append((read, write))
 
-    new_writes = defaultdict(list)
-    for reads_writes in mem_to_read_write.values():
-        read, write = reads_writes[0]
-        alloc = get_custom(write.memory)
-        replace_with_hardware_transpose_writes(read, write, new_writes, trace)
-        logger.info("marked  in hardware transpose")
-        breakpoint()
-
-        # if should_mark_for_hardware_transpose(read, write, hardware_constraint):
-        #    mark_allocation_for_hardware_transpose(write.memory, read, write)
+            if meets_hw_transpose_requirements(read, write):
+                breakpoint()
+                rw_mem = (read.memory, write.memory)
+                if rw_mem not in rw_mem_seen:
+                    rw_mem_seen.add(rw_mem)
+                    mark_hw_transpose(write, new_writes)
 
     if new_writes:
         update_write_dependencies(new_writes, trace)
 
 
-def replace_with_hardware_transpose_writes(
-    read: Read, write: Write, new_writes: dict, trace: CapturedTrace
-):
+def mark_hw_transpose(write: Write, new_writes: dict):
     with write.graph.inserting_before(write.fx_node):
-        get_custom(write.memory).update_arg("transpose", True)
+        dest = get_custom(write.memory)
+        dest.update_arg("hardware_transpose", LDSTransposeRead.tr8_b64)
         hw_write = Write(
             write.register_,
             write.memory,
@@ -106,9 +118,6 @@ def replace_with_hardware_transpose_writes(
         ).add_to_graph(write.graph)
 
         hw_write.index = write.index
-
-        # Collect in the same pattern as in_thread_transpose
         new_writes[write.memory].append(hw_write)
 
-        logger.info(f"Created hardware transpose write: {hw_write}")
-        breakpoint()
+        logger.info(f"Marked hardware transpose write: {hw_write}")

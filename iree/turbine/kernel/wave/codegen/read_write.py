@@ -42,6 +42,7 @@ from ...ops.wave_ops import get_custom, read, write, CustomOp
 
 from ..utils.general_utils import find_index_bounds, get_fastest_index
 from ..utils.symbol_utils import safe_subs, subs_idxc
+from ..utils.classes import LDSTransposeRead
 
 from ..._support.indexing import IndexingContext, IndexExpr, IndexSequence, index_symbol
 from ...lang.wave_types import IndexMapping
@@ -646,6 +647,15 @@ def handle_read(emitter: WaveEmitter, node: fx.Node):
             index,
             elements_per_thread,
         )
+
+        memory_node = get_custom(memory)
+        if hasattr(memory_node, "hardware_transpose"):
+            if (
+                memory_node.hardware_transpose == LDSTransposeRead.tr8_b64
+                and subs_idxc(elements_per_thread) == 8
+            ):
+                breakpoint()
+
         result = _create_vec_read_write(
             emitter,
             input_shape,

@@ -178,7 +178,7 @@ def handle_allocate(emitter: WaveEmitter, node: fx.Node):
             padding,
             parent,
             offset,
-            transpose,
+            hardware_transpose,
         ) = node.args
     except ValueError as e:
         raise ValidationError("Malformed arguments") from e
