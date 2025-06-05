@@ -28,6 +28,7 @@ from ...compiler.ir import (
     memref_d,
     scf_d,
     vector_d,
+    rocdl_d,
 )
 
 from ...compiler.utils import strides_from_symbolic_shape
@@ -37,6 +38,8 @@ from ...compiler.vector_codegen import (
     cast_py_literal,
     cast_vector,
 )
+
+from iree.turbine.aot.support.ir_utils import get_conversion_op
 
 from ...ops.wave_ops import get_custom, read, write, CustomOp
 
@@ -617,6 +620,15 @@ def _create_vec_read_write(
             return
 
 
+# def hw_tr(emitter: WaveEmitter, node: fx.Node, kb_src: Value, vector_type: VectorType, start_indices):
+#    i32_type = IntegerType.get_signless(32)
+#    byte_offset = arith_d.index_cast(i32_type, start_indices)
+#    i32_vec_type = VectorType.get([2], i32_type)
+#
+#    with InsertionPoint(emitter.ip):
+#        reuslt = rocdl_d.ds_read_tr8_b64_(i32_vec_type, byte_offset)
+
+
 @handle_op(read)
 def handle_read(emitter: WaveEmitter, node: fx.Node):
     # This is similar to tkl.store with fixed start indices for now.
@@ -649,27 +661,27 @@ def handle_read(emitter: WaveEmitter, node: fx.Node):
         )
 
         memory_node = get_custom(memory)
-        if hasattr(memory_node, "hardware_transpose"):
+        if not mask and hasattr(memory_node, "hardware_transpose"):
             if (
                 memory_node.hardware_transpose == LDSTransposeRead.tr8_b64
                 and subs_idxc(elements_per_thread) == 8
             ):
                 breakpoint()
-
-        result = _create_vec_read_write(
-            emitter,
-            input_shape,
-            kb_src,
-            None,
-            vector_type,
-            start_indices,
-            start_indices_wg,
-            start_indices_th,
-            elements_per_thread,
-            get_custom(memory),
-            mask,
-            offsets_vec=None,
-        )
+        else:
+            result = _create_vec_read_write(
+                emitter,
+                input_shape,
+                kb_src,
+                None,
+                vector_type,
+                start_indices,
+                start_indices_wg,
+                start_indices_th,
+                elements_per_thread,
+                get_custom(memory),
+                mask,
+                offsets_vec=None,
+            )
     else:
         dyn_vals = tuple(
             cast_vector(emitter, reg, element_type=IndexType.get()) for reg in dyn_vals
