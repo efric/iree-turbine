@@ -148,6 +148,14 @@ def in_thread_transpose(trace: CapturedTrace, constraints: list[Constraint]):
         read, write = reads_writes[0]
         logger.info(f"processing read={read}, write={write}")
 
+        write_memory = get_custom(write.memory)
+        # Conservatively skip in thread transpose if marked for hardware transpose
+        if hasattr(write_memory, "hardware_transpose"):
+            logger.info("skip in thread transpose")
+            # TODO: We can probably still benefit from coalesced global reads and just
+            # not transpose when writing to shared
+            continue
+
         if read.mapping_dynamic_vals:
             # TODO: While we do support dynamic val mappings functionally,
             # changing it access pattern causes perf degradation on paged decode

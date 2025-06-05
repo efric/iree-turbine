@@ -59,7 +59,6 @@ def is_transpose_read(node: fx.Node) -> bool:
 
 def meets_hw_transpose_requirements(read: Read, write: Write):
     if not get_default_arch() == "gfx942":
-        breakpoint()
         return False
 
     write_memory = get_custom(write.memory)
@@ -95,7 +94,6 @@ def mark_hardware_transpose_candidates(
                 continue
 
             if meets_hw_transpose_requirements(read, write):
-                breakpoint()
                 rw_mem = (read.memory, write.memory)
                 if rw_mem not in rw_mem_seen:
                     rw_mem_seen.add(rw_mem)

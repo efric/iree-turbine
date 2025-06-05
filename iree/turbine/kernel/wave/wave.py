@@ -601,7 +601,6 @@ class LaunchableWave(Launchable):
 
         pass_times = {}
         for p in graph_passes:
-            # breakpoint()
             try_apply_pass(p, trace, print_ir_before, print_ir_after, pass_times)
 
         if options.print_pass_times:
