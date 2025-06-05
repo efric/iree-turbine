@@ -57,7 +57,10 @@ def is_transpose_read(node: fx.Node) -> bool:
     return is_transposed_read(read)
 
 
-def meets_hw_transpose_requirements(read: Read, write: Write):
+def meets_hw_transpose_requirements(
+    read: Read, write: Write, constraints: list[Constraint]
+):
+    # switch for 950 when ready
     if not get_default_arch() == "gfx942":
         return False
 
@@ -69,6 +72,21 @@ def meets_hw_transpose_requirements(read: Read, write: Write):
         return False
 
     if read.type.dtype.bitwidth() != 8:
+        return False
+
+    constraint_tile_size = {
+        c.dim: c.tile_size
+        for c in constraints
+        if isinstance(c, (TilingConstraint, WorkgroupConstraint))
+    }
+    materialized_shape = materialize_shape(
+        constraint_tile_size, read.type.symbolic_shape
+    )
+    if materialized_shape[-2] % 16 != 0 or materialized_shape[-1] % 8 != 0:
+        return False
+
+    hardware_constraint = get_hardware_constraint(constraints)
+    if hardware_constraint.threads_per_wave < 16:
         return False
 
     return True
@@ -93,7 +111,8 @@ def mark_hardware_transpose_candidates(
             if not isinstance(write, Write):
                 continue
 
-            if meets_hw_transpose_requirements(read, write):
+            if meets_hw_transpose_requirements(read, write, constraints):
+                breakpoint()
                 rw_mem = (read.memory, write.memory)
                 if rw_mem not in rw_mem_seen:
                     rw_mem_seen.add(rw_mem)
