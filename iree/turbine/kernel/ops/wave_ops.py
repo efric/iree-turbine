@@ -1121,6 +1121,7 @@ class Allocate(CustomOp):
     padding: int = 0
     parent: Optional[fx.Node] = None
     offset: Optional[IndexExpr] = None
+    transpose: bool = False
 
     @property
     def indexing_dims(self) -> list[IndexSymbol]:
