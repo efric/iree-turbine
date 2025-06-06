@@ -620,13 +620,35 @@ def _create_vec_read_write(
             return
 
 
-# def hw_tr(emitter: WaveEmitter, node: fx.Node, kb_src: Value, vector_type: VectorType, start_indices):
-#    i32_type = IntegerType.get_signless(32)
-#    byte_offset = arith_d.index_cast(i32_type, start_indices)
-#    i32_vec_type = VectorType.get([2], i32_type)
-#
-#    with InsertionPoint(emitter.ip):
-#        reuslt = rocdl_d.ds_read_tr8_b64_(i32_vec_type, byte_offset)
+def emit_hardware_transpose_intrinsic(
+    vector_type: VectorType, start_indices, stride
+) -> Value:
+    i32_type = IntegerType.get_signless(32)
+    row_offset = arith_d.muli(start_indices[0], stride)
+    linear_offset = arith_d.addi(row_offset, start_indices[1])
+    byte_offset = arith_d.index_cast(i32_type, linear_offset)
+
+    i32_vec_type = VectorType.get([2], i32_type)
+
+    packed_result = rocdl_d.ds_read_tr8_b64(i32_vec_type, byte_offset)
+
+    i32_0 = vector_d.extract(packed_result, static_position=[0], dynamic_position=[])
+    i32_1 = vector_d.extract(packed_result, static_position=[1], dynamic_position=[])
+
+    vtype = vector_type.element_type
+    vec4_v_type = VectorType.get([4], vtype)
+
+    vec0 = vector_d.bitcast(vec4_v_type, i32_0)
+    vec1 = vector_d.bitcast(vec4_v_type, i32_1)
+
+    elements = []
+    for vec in [vec0, vec1]:
+        for i in range(4):
+            elem = vector_d.extract(vec, static_position=[i], dynamic_position=[])
+            elements.append(elem)
+
+    result = vector_d.from_elements(vector_type, elements)
+    return result
 
 
 @handle_op(read)
@@ -661,12 +683,19 @@ def handle_read(emitter: WaveEmitter, node: fx.Node):
         )
 
         memory_node = get_custom(memory)
-        if not mask and hasattr(memory_node, "hardware_transpose"):
-            if (
-                memory_node.hardware_transpose == LDSTransposeRead.tr8_b64
-                and subs_idxc(elements_per_thread) == 8
-            ):
-                breakpoint()
+        # TODO: extend for other variants
+        use_hw_transpose = (
+            not mask
+            and hasattr(memory_node, "hardware_transpose")
+            and memory_node.hardware_transpose == LDSTransposeRead.tr8_b64
+            and subs_idxc(elements_per_thread) == 8
+        )
+        if use_hw_transpose:
+            stride_expr = memory_node.distributed_shape[-1]
+            stride = gen_sympy_index(add_emitter_subs(emitter), stride_expr)
+            result = emit_hardware_transpose_intrinsic(
+                vector_type, start_indices, stride
+            )
         else:
             result = _create_vec_read_write(
                 emitter,

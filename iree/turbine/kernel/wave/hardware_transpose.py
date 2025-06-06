@@ -57,11 +57,29 @@ def is_transpose_read(node: fx.Node) -> bool:
     return is_transposed_read(read)
 
 
+def feeds_mma_instruction(write: Write) -> bool:
+    write_memory = write.memory
+
+    for user_node in write_memory.users:
+        custom_user = get_custom(user_node)
+        if isinstance(custom_user, Read):
+            for mma_user_node in user_node.users:
+                mma_custom = get_custom(mma_user_node)
+                breakpoint()
+
+                if (
+                    hasattr(mma_custom, "tkw_op_name")
+                    and mma_custom.tkw_op_name == "mma"
+                ):
+                    return True
+
+    return False
+
+
 def meets_hw_transpose_requirements(
     read: Read, write: Write, constraints: list[Constraint]
 ):
-    # switch for 950 when ready
-    if not get_default_arch() == "gfx942":
+    if not get_default_arch() == "gfx950":
         return False
 
     write_memory = get_custom(write.memory)
@@ -72,6 +90,9 @@ def meets_hw_transpose_requirements(
         return False
 
     if read.type.dtype.bitwidth() != 8:
+        return False
+
+    if not feeds_mma_instruction(write):
         return False
 
     constraint_tile_size = {
@@ -116,6 +137,9 @@ def mark_hardware_transpose_candidates(
                 rw_mem = (read.memory, write.memory)
                 if rw_mem not in rw_mem_seen:
                     rw_mem_seen.add(rw_mem)
+                    read.update_arg(
+                        "mapping", None
+                    )  # make loads from global contiguous
                     mark_hw_transpose(write, new_writes)
 
     if new_writes:
