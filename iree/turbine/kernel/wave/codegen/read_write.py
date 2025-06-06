@@ -29,6 +29,7 @@ from ...compiler.ir import (
     scf_d,
     vector_d,
     rocdl_d,
+    llvm_d,
 )
 
 from ...compiler.utils import strides_from_symbolic_shape
@@ -620,25 +621,31 @@ def _create_vec_read_write(
             return
 
 
+# TODO: support more variants; currently hardcoded for tr8
 def emit_hardware_transpose_intrinsic(
-    vector_type: VectorType, start_indices, stride
+    vector_type: VectorType, start_indices, stride, kb_src, kb_ir_type
 ) -> Value:
-    i32_type = IntegerType.get_signless(32)
-    row_offset = arith_d.muli(start_indices[0], stride)
-    linear_offset = arith_d.addi(row_offset, start_indices[1])
-    byte_offset = arith_d.index_cast(i32_type, linear_offset)
+    smem_base = memref_d.extract_aligned_pointer_as_index(kb_src)
+    partial_offset = arith_d.muli(start_indices[-2], stride)
+    smem_offset = arith_d.addi(partial_offset, start_indices[-1])
+    final_address = arith_d.addi(smem_base, smem_offset)
 
+    ptr_type = llvm_d.PointerType.get(address_space=3, context=kb_ir_type.context)
+    llvm_ptr = llvm_d.inttoptr(ptr_type, final_address)
+
+    i32_type = IntegerType.get_signless(32)
     i32_vec_type = VectorType.get([2], i32_type)
 
-    packed_result = rocdl_d.ds_read_tr8_b64(i32_vec_type, byte_offset)
+    packed_result = rocdl_d.ds_read_tr8_b64(i32_vec_type, llvm_ptr)
 
+    # extract the two i32s
     i32_0 = vector_d.extract(packed_result, static_position=[0], dynamic_position=[])
     i32_1 = vector_d.extract(packed_result, static_position=[1], dynamic_position=[])
 
+    # bitcast to original 8 bit value
     vtype = vector_type.element_type
     vec4_v_type = VectorType.get([4], vtype)
-
-    vec0 = vector_d.bitcast(vec4_v_type, i32_0)
+    vec0 = vector_d.bitcast(vec4_v_type, i32_0)  # vector<4x_8>
     vec1 = vector_d.bitcast(vec4_v_type, i32_1)
 
     elements = []
@@ -694,8 +701,23 @@ def handle_read(emitter: WaveEmitter, node: fx.Node):
             stride_expr = memory_node.distributed_shape[-1]
             stride = gen_sympy_index(add_emitter_subs(emitter), stride_expr)
             result = emit_hardware_transpose_intrinsic(
-                vector_type, start_indices, stride
+                vector_type, start_indices, stride, kb_src, kb_ir_type
             )
+            # breakpoint()
+            # result = _create_vec_read_write(
+            #     emitter,
+            #     input_shape,
+            #     kb_src,
+            #     None,
+            #     vector_type,
+            #     start_indices,
+            #     start_indices_wg,
+            #     start_indices_th,
+            #     elements_per_thread,
+            #     get_custom(memory),
+            #     mask,
+            #     offsets_vec=None,
+            # )
         else:
             result = _create_vec_read_write(
                 emitter,

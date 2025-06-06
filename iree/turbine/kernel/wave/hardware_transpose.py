@@ -65,7 +65,6 @@ def feeds_mma_instruction(write: Write) -> bool:
         if isinstance(custom_user, Read):
             for mma_user_node in user_node.users:
                 mma_custom = get_custom(mma_user_node)
-                breakpoint()
 
                 if (
                     hasattr(mma_custom, "tkw_op_name")
@@ -79,7 +78,7 @@ def feeds_mma_instruction(write: Write) -> bool:
 def meets_hw_transpose_requirements(
     read: Read, write: Write, constraints: list[Constraint]
 ):
-    if not get_default_arch() == "gfx950":
+    if not get_default_arch() == "gfx942":
         return False
 
     write_memory = get_custom(write.memory)
@@ -133,7 +132,6 @@ def mark_hardware_transpose_candidates(
                 continue
 
             if meets_hw_transpose_requirements(read, write, constraints):
-                breakpoint()
                 rw_mem = (read.memory, write.memory)
                 if rw_mem not in rw_mem_seen:
                     rw_mem_seen.add(rw_mem)
