@@ -78,7 +78,7 @@ def feeds_mma_instruction(write: Write) -> bool:
 def meets_hw_transpose_requirements(
     read: Read, write: Write, constraints: list[Constraint]
 ):
-    if not get_default_arch() == "gfx942":
+    if not get_default_arch() == "gfx950":
         return False
 
     write_memory = get_custom(write.memory)
