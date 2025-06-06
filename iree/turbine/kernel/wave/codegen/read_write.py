@@ -630,8 +630,11 @@ def emit_hardware_transpose_intrinsic(
     smem_offset = arith_d.addi(partial_offset, start_indices[-1])
     final_address = arith_d.addi(smem_base, smem_offset)
 
+    i64_type = IntegerType.get_signless(64)
+    final_address_i64 = arith_d.index_cast(i64_type, final_address)
+
     ptr_type = llvm_d.PointerType.get(address_space=3, context=kb_ir_type.context)
-    llvm_ptr = llvm_d.inttoptr(ptr_type, final_address)
+    llvm_ptr = llvm_d.inttoptr(ptr_type, final_address_i64)
 
     i32_type = IntegerType.get_signless(32)
     i32_vec_type = VectorType.get([2], i32_type)
@@ -703,7 +706,7 @@ def handle_read(emitter: WaveEmitter, node: fx.Node):
             result = emit_hardware_transpose_intrinsic(
                 vector_type, start_indices, stride, kb_src, kb_ir_type
             )
-            # breakpoint()
+            breakpoint()
             # result = _create_vec_read_write(
             #     emitter,
             #     input_shape,
