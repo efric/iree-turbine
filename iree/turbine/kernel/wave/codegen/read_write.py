@@ -623,7 +623,7 @@ def _create_vec_read_write(
 
 # TODO: support more variants; currently hardcoded for tr8
 def emit_hardware_transpose_intrinsic(
-    vector_type: VectorType, start_indices, stride, kb_src, kb_ir_type
+    vector_type: VectorType, start_indices, stride, kb_src, kb_ir_type, emitter
 ) -> Value:
     smem_base = memref_d.extract_aligned_pointer_as_index(kb_src)
     partial_offset = arith_d.muli(start_indices[-2], stride)
@@ -641,23 +641,23 @@ def emit_hardware_transpose_intrinsic(
 
     packed_result = rocdl_d.ds_read_tr8_b64(i32_vec_type, llvm_ptr)
 
-    # extract the two i32s
-    i32_0 = vector_d.extract(packed_result, static_position=[0], dynamic_position=[])
-    i32_1 = vector_d.extract(packed_result, static_position=[1], dynamic_position=[])
-
     # bitcast to original 8 bit value
     vtype = vector_type.element_type
-    vec4_v_type = VectorType.get([4], vtype)
-    vec0 = vector_d.bitcast(vec4_v_type, i32_0)  # vector<4x_8>
-    vec1 = vector_d.bitcast(vec4_v_type, i32_1)
+    vec8_v_type = VectorType.get([8], vtype)
+    result = vector_d.bitcast(vec8_v_type, packed_result)  
 
-    elements = []
-    for vec in [vec0, vec1]:
-        for i in range(4):
-            elem = vector_d.extract(vec, static_position=[i], dynamic_position=[])
-            elements.append(elem)
-
-    result = vector_d.from_elements(vector_type, elements)
+    # result = vector_d.from_elements(vector_type, elements)
+    print(f"vector_type: {vector_type}")
+    print(f"vector_type.shape: {vector_type.shape}")
+    print(f"start_indices: {start_indices}")
+    print(f"stride: {stride}")
+    print(f"Generated IR: packed_result = {packed_result}")
+    # print(f"Generated IR: unpacked_result = {unpacked_result}")
+    # print(f"Elements extracted: {len(elements)}")
+    print(f"Address components:")
+    print(f"  smem_base: {smem_base}")
+    print(f"  tile_row: {start_indices[0]}")
+    print(f"  tile_col_with_offset: {start_indices[1]}")
     return result
 
 
@@ -703,24 +703,25 @@ def handle_read(emitter: WaveEmitter, node: fx.Node):
         if use_hw_transpose:
             stride_expr = memory_node.distributed_shape[-1]
             stride = gen_sympy_index(add_emitter_subs(emitter), stride_expr)
-            result = emit_hardware_transpose_intrinsic(
-                vector_type, start_indices, stride, kb_src, kb_ir_type
-            )
-            breakpoint()
-            # result = _create_vec_read_write(
-            #     emitter,
-            #     input_shape,
-            #     kb_src,
-            #     None,
-            #     vector_type,
-            #     start_indices,
-            #     start_indices_wg,
-            #     start_indices_th,
-            #     elements_per_thread,
-            #     get_custom(memory),
-            #     mask,
-            #     offsets_vec=None,
+            # breakpoint()
+            # result = emit_hardware_transpose_intrinsic(
+            #     vector_type, start_indices, stride, kb_src, kb_ir_type, emitter
             # )
+            # breakpoint()
+            result = _create_vec_read_write(
+                emitter,
+                input_shape,
+                kb_src,
+                None,
+                vector_type,
+                start_indices,
+                start_indices_wg,
+                start_indices_th,
+                elements_per_thread,
+                get_custom(memory),
+                mask,
+                offsets_vec=None,
+            )
         else:
             result = _create_vec_read_write(
                 emitter,
