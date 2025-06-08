@@ -378,11 +378,20 @@ def is_gather(custom: CustomOp) -> bool:
     if not isinstance(custom, Read):
         return False
     assert custom.index, f"Read node {custom} does not have an index."
-    return any(
-        custom.index[x].size > 1
+    # breakpoint()
+    # cheese = [
+    #     (x, custom.index[x].size)
+    #     for x in custom.memory_type.symbolic_shape[:-1]
+    #     if x in custom.index
+    # ]
+    # breakpoint()
+    c =  any(
+        subs_idxc(custom.index[x].size) > 1
         for x in custom.memory_type.symbolic_shape[:-1]
         if x in custom.index
     )
+    # breakpoint()
+    return c
 
 
 def get_live_tensors() -> list[torch.Tensor]:

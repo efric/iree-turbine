@@ -302,6 +302,7 @@ def test_transpose_read(shape, use_buffer_ops, request):
     test = wave_compile(options, test)
 
     test(a, b)
+    breakpoint()
     assert_close(a.T, b)
 
 

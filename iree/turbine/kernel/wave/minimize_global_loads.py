@@ -65,10 +65,12 @@ def is_transposed_read(custom: Read) -> bool:
     Returns true if the fastest dim in register is not
     the same as fastest dim in global memory.
     """
+    # breakpoint()
     assert isinstance(custom, Read) and "Expected input to be Read"
     global_fastest_dim = get_custom(custom.memory).type.symbolic_shape[-1]
     fastest_dim_idx = get_fastest_index(custom.index)
     register_fastest_dim = list(custom.index)[fastest_dim_idx]
+    # breakpoint()
     return register_fastest_dim != global_fastest_dim
 
 
