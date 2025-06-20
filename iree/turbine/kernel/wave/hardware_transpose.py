@@ -77,6 +77,7 @@ def feeds_mma_instruction(write: Write) -> bool:
 def meets_hw_transpose_requirements(
     read: Read, write: Write, constraints: list[Constraint]
 ):
+    # breakpoint()
     if not get_default_arch() == "gfx950":
         return False
 
@@ -101,16 +102,17 @@ def meets_hw_transpose_requirements(
     materialized_shape = materialize_shape(
         constraint_tile_size, read.type.symbolic_shape
     )
-    if any(s > 1 for s in materialized_shape[:-2]) or any(
-        s <= 1 for s in materialized_shape[-2:]
-    ):
-        logger.info(
-            f"only last 2 dims transpose is supported, got {materialized_shape}"
-        )
-        return False
+    breakpoint()
+    # if any(s > 1 for s in materialized_shape[:-2]) or any(s <= 1 for s in materialized_shape[-2:]
+    # ):
+    #     logger.info(
+    #         f"only last 2 dims transpose is supported, got {materialized_shape}"
+    #     )
+    #     return False
 
-    if materialized_shape[-2] % 16 != 0 or materialized_shape[-1] % 8 != 0:
-        return False
+    # breakpoint()
+    # if materialized_shape[-2] % 16 != 0 or materialized_shape[-1] % 8 != 0:
+    #     return False
 
     hardware_constraint = get_hardware_constraint(constraints)
     if hardware_constraint.threads_per_wave < 16:
@@ -129,7 +131,9 @@ def mark_hardware_transpose_candidates(
     This is separate from in_thread_transpose optimization.
     """
     logger.info("mark_hardware_transpose_candidates")
+    # breakpoint()
     candidates = trace.walk(is_transpose_read)
+    breakpoint()
 
     rw_mem_seen = set()
     new_writes = defaultdict(list)
@@ -165,6 +169,12 @@ def mark_hw_transpose(write: Write, new_writes: dict, read: Read, new_reads):
     with write.graph.inserting_before(write.fx_node):
         dest = get_custom(write.memory)
         dest.update_arg("hardware_transpose", LDSTransposeRead.tr8_b64)
+        # breakpoint()
+        # current_shape = list(dest.distributed_shape)
+        # current_shape[-1] = ((current_shape[-1] + 511) // 512) * 512
+        # dest.update_arg("distributed_shape", tuple(current_shape))
+        # dest.distributed_shape = tuple(current_shape)
+        # breakpoint()
         hw_write = Write(
             write.register_,
             write.memory,
@@ -215,7 +225,6 @@ otherwise you get
           %60 = memref.load %reinterpret_cast[%c7680] : memref<?xi8, strided<[1], offset: ?>>
           %61 = memref.load %reinterpret_cast[%c8960] : memref<?xi8, strided<[1], offset: ?>>
 #         """
-        breakpoint()
     with read.graph.inserting_before(read.fx_node):
                 new_read = Read(
                     read.memory,

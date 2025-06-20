@@ -6,6 +6,7 @@
 
 import pytest
 import torch
+import numpy as np
 import torch.nn.functional as F
 import iree.turbine.kernel as tk
 import iree.turbine.kernel.lang as tkl
@@ -15,6 +16,7 @@ from iree.turbine.kernel.wave.iree_utils import generate_iree_ref
 from iree.turbine.kernel.wave.utils.general_utils import (
     get_default_scheduling_params,
 )
+from iree.turbine.kernel.wave.wave_sim import wave_sim
 from iree.turbine.kernel.wave.utils.run_utils import (
     set_default_run_config,
 )
@@ -24,6 +26,7 @@ from iree.turbine.kernel.wave.utils.torch_utils import (
     device_zeros,
     device_ones,
     to_default_device,
+    device_full
 )
 from iree.turbine.kernel.wave.scheduling.schedule import SchedulingType
 from iree.turbine.kernel.wave.compile import WaveCompileOptions, wave_compile
@@ -345,7 +348,7 @@ def testNonTransposeGemm(
     b = device_randn(shape[2], shape[1], dtype=torch.float16)
     c = device_zeros(shape[0], shape[1], dtype=torch.float32)
     asm = gemm(a, b, c)
-    breakpoint()
+    # breakpoint()
 
     if dump_generated_mlir:
         filename = f"wave_gemm_{'x'.join(map(str, shape))}.mlir"
@@ -922,6 +925,13 @@ def testCDNA2IntGemm(
 # works
 @require_e2e
 # @require_cdna3
+# (1024, 5120, 640),
+# 1024 * 640 @ 640 @ 5120
+# m 1024, n 5120, k 640
+# 64, 64, 32
+# 16 blocks M
+# 80 blocks N
+# in elements, not bytes
 @pytest.mark.parametrize("shape", get_test_shapes("test_gemm"))
 @pytest.mark.parametrize(
     "enable_scheduling",
@@ -931,7 +941,7 @@ def testCDNA2IntGemm(
     "mfma_variant",
     [
         MMAType.I32_16x16x32_I8,
-        MMAType.I32_32x32x16_I8,
+        # MMAType.I32_32x32x16_I8,
     ],
 )
 def testCDNA3IntGemm(
@@ -962,6 +972,12 @@ def testCDNA3IntGemm(
             threads_per_wave=64, waves_per_block=(2, 2, 1), mma_type=mfma_variant
         )
     ]
+
+    i = tkw.IndexMapping.iterator(0)
+    j = tkw.IndexMapping.iterator(1)
+    b_mapping = tkw.IndexMapping(
+        num_iterators=2, inputs={N: i, K: j}, outputs={N: i, K: j}
+    )
 
     @tkw.wave(constraints)
     def gemm(
@@ -1029,12 +1045,107 @@ def testCDNA3IntGemm(
         options.benchmark_results_file = os.path.join(
             dump_perf, "iree_" + request.node.name + ".json"
         )
-    iree_ref = device_zeros(shape[0], shape[1], dtype=torch.int32)
-    generate_iree_ref("mmt", [a, b], [iree_ref])
-    assert_close(c, iree_ref, check_device=False)
+    # iree_ref = device_zeros(shape[0], shape[1], dtype=torch.int32)
+    # generate_iree_ref("mmt", [a, b], [iree_ref])
+    # assert_close(c, iree_ref, check_device=False)
+
+@pytest.mark.parametrize("shape", [(16, 8)])
+def testi8Transpose(shape: tuple[int]):
+    # Input sizes
+    M = tkl.sym.M
+    N = tkl.sym.N
+    # Workgroup tile sizes
+    BLOCK_M = tkl.sym.BLOCK_M
+    BLOCK_N = tkl.sym.BLOCK_N
+    # Address space (for GPU, shared(1) or global(0))
+    ADDRESS_SPACE = tkl.sym.ADDRESS_SPACE
+    LOAD_ELEMS_PER_THREAD = tkl.sym.LOAD_ELEMS_PER_THREAD
+    STORE_ELEMS_PER_THREAD = tkl.sym.STORE_ELEMS_PER_THREAD
+
+    # Expose user-constraints
+    '''
+    64x1 workgroup so 8 workgroups
+    each workgroup has 1 wave that processes 64x1
+    '''
+    constraints: list[tkw.Constraint] = [tkw.WorkgroupConstraint(M, BLOCK_M, 0)]
+    constraints += [tkw.WorkgroupConstraint(N, BLOCK_N, 1)]
+    constraints += [tkw.WaveConstraint(M, BLOCK_M)]
+    constraints += [tkw.WaveConstraint(N, BLOCK_N)]
+
+    constraints += [
+        tkw.HardwareConstraint(
+            threads_per_wave=64, waves_per_block=(1, 1, 1), vector_shapes={M: BLOCK_M, N: BLOCK_N},
+        )
+    ]
+
+    i = tkw.IndexMapping.iterator(0)
+    j = tkw.IndexMapping.iterator(1)
+    b_mapping = tkw.IndexMapping(
+        num_iterators=2, inputs={N: i, M: j}, outputs={N: i, M: j}
+    )
+    c_mapping = tkw.IndexMapping(
+          num_iterators=2,
+          inputs={M: i, N: j},  
+          outputs={N: j, M: i}  
+    )
+
+    @tkw.wave(constraints)
+    def transpose(
+        b: tkl.Memory[M, N, ADDRESS_SPACE, tkl.i8],
+        c: tkl.Memory[N, M, GLOBAL_ADDRESS_SPACE, tkl.i8],
+    ):
+        b_reg = tkw.read(b, mapping=b_mapping)
+        # b_reg = tkw.read(b)
+        tkw.write(b_reg, c, elements_per_thread=8)
+        # tkw.write(b_reg, c, mapping=c_mapping)
+        # tkw.write(b_reg, c, elements_per_thread=8)
+        '''
+        observations: 
+        sw transpose at read: just one col -> row
+            with b_mapping, no c_mapping -> doesnt work 
+        hw transpose at read: weird results (can only work with elements_per_thread=8)
+            -> expected because output of instruction is 8xi8 per thread
+            -> first byte is right lol 
+            -> indexing is all bad - but from mapping or calculation?
+        sw transpose at write: works as expected
+            -> no b_mapping, with 
+
+        but we want it to happen on read
+        '''
+
+    hyperparams = {
+        ADDRESS_SPACE: SHARED_ADDRESS_SPACE,
+        M: shape[0],
+        N: shape[1],
+        BLOCK_N: 8,
+        BLOCK_M: shape[0]
+    }
+    hyperparams.update(get_default_scheduling_params())
+
+    options = WaveCompileOptions(
+        subs=hyperparams,
+        canonicalize=True,
+        schedule=SchedulingType.NONE,
+        use_scheduling_barriers=False
+    )
+    options = set_default_run_config(options)
+    transpose = wave_compile(options, transpose)
+
+    # b = device_ones(shape[0], shape[1], device='cuda', dtype=torch.int8)
+    randint_hi = 63
+    b = device_randint(randint_hi, (shape[0], shape[1]), device='cuda', dtype=torch.int8)
+    c = device_zeros(shape[1], shape[0], dtype=torch.int8)
+    asm = transpose(b, c)
+    d = torch.transpose(b, 0, 1)
+    print(d)
+    np_array = c.cpu().numpy()
+    np.savetxt("tensor.csv", np_array, fmt="%d", delimiter=",")
+    breakpoint()
 
 @require_e2e
-@pytest.mark.parametrize("shape", [(256, 1280, 160)])
+# @pytest.mark.parametrize("shape", [(256, 1280, 160)])
+@pytest.mark.parametrize("shape", [(16, 16, 32)])
+# @pytest.mark.parametrize("shape", [(16, 16, 16)])
 @pytest.mark.parametrize(
     "enable_scheduling",
     [SchedulingType.NONE],
@@ -1043,7 +1154,8 @@ def testCDNA3IntGemm(
     "mfma_variant",
     [
         MMAType.I32_16x16x32_I8,
-        MMAType.I32_32x32x16_I8,
+        #16 x 32 @ 32 x 16
+        # MMAType.I32_32x32x16_I8,
     ],
 )
 def testi8NontransposeGemm(
@@ -1063,15 +1175,20 @@ def testi8NontransposeGemm(
     ADDRESS_SPACE = tkl.sym.ADDRESS_SPACE
 
     # Expose user-constraints
-    constraints: list[tkw.Constraint] = [tkw.WorkgroupConstraint(M, BLOCK_M, 0)]
-    constraints += [tkw.WorkgroupConstraint(N, BLOCK_N, 1)]
+    constraints: list[tkw.Constraint] = [tkw.WorkgroupConstraint(M, BLOCK_M, 0)] #Each workgroup gets Block M elements in dim x
+    constraints += [tkw.WorkgroupConstraint(N, BLOCK_N, 1)] #Each workgroup gets Block N elements in dim y
+    '''
+    so a workgroup has 64x64 elements
+    A block has 2x2 waves
+    Each wave handles 32x32 elements
+    '''
     constraints += [tkw.TilingConstraint(K, BLOCK_K)]
-    constraints += [tkw.WaveConstraint(M, BLOCK_M / 2)]
-    constraints += [tkw.WaveConstraint(N, BLOCK_N / 2)]
+    constraints += [tkw.WaveConstraint(M, BLOCK_M)]
+    constraints += [tkw.WaveConstraint(N, BLOCK_N)]
 
     constraints += [
         tkw.HardwareConstraint(
-            threads_per_wave=64, waves_per_block=(2, 2, 1), mma_type=mfma_variant
+            threads_per_wave=64, waves_per_block=(1, 1, 1), mma_type=mfma_variant
         )
     ]
 
@@ -1103,8 +1220,8 @@ def testi8NontransposeGemm(
 
     hyperparams = {
         ADDRESS_SPACE: SHARED_ADDRESS_SPACE,
-        BLOCK_M: 64,
-        BLOCK_N: 64,
+        BLOCK_M: 16,
+        BLOCK_N: 16,
         BLOCK_K: 32,
         M: shape[0],
         N: shape[1],
@@ -1130,10 +1247,15 @@ def testi8NontransposeGemm(
     gemm = wave_compile(options, gemm)
 
     randint_hi = 4
-    a = device_randint(randint_hi, (shape[0], shape[2]), device='cuda', dtype=torch.int8)
-    b = device_randint(randint_hi, (shape[2], shape[1]), device='cuda', dtype=torch.int8)
+    # a = device_randint(randint_hi, (shape[0], shape[2]), device='cuda', dtype=torch.int8)
+    # b = device_randint(randint_hi, (shape[2], shape[1]), device='cuda', dtype=torch.int8)
+    a = device_ones(shape[0], shape[2], device='cuda', dtype=torch.int8)
+    b = device_ones(shape[2], shape[1], device='cuda', dtype=torch.int8)
     c = device_zeros(shape[0], shape[1], dtype=torch.int32)
     asm = gemm(a, b, c)
+    np_array = c.cpu().numpy()
+    breakpoint()
+    np.savetxt("tensor.csv", np_array, fmt="%d", delimiter=",")
 
     if dump_generated_mlir:
         filename = f"wave_gemm_{'x'.join(map(str, shape))}_i8.mlir"

@@ -121,6 +121,7 @@ def _resolve_symbols(func: Callable[..., Any], symbols: dict[Any, Any]):
     new_closure = None
 
     sym_subs = [(key, val) for key, val in symbols.items() if isinstance(key, Symbol)]
+    breakpoint()
 
     def resolve_impl(val):
         if isinstance(val, Symbol):
