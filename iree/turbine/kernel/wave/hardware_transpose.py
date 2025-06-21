@@ -91,8 +91,8 @@ def meets_hw_transpose_requirements(
     if read.type.dtype.bitwidth() != 8:
         return False
 
-    if not feeds_mma_instruction(write):
-        return False
+    # if not feeds_mma_instruction(write):
+    #     return False
 
     constraint_tile_size = {
         c.dim: c.tile_size

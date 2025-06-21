@@ -625,29 +625,31 @@ def _create_vec_read_write(
 
 # TODO: support more variants; currently hardcoded for tr8
 
-def tid_mapping_i8_16x16x32(kb_src, tid, emitter):
+def tid_mapping_i8_16x16x32(kb_src, tid, stride, emitter):
     smem_base = memref_d.extract_aligned_pointer_as_index(kb_src)
     tid_mlir = gen_sympy_index(add_emitter_subs(emitter), tid)
 
     c2 = arith_d.constant(IndexType.get(), 2)
     c8 = arith_d.constant(IndexType.get(), 8)
     c16 = arith_d.constant(IndexType.get(), 16)
-    c40 = arith_d.constant(IndexType.get(), 40)
+    # c40 = arith_d.constant(IndexType.get(), stride)
 
     # row = 8 * (tid % 2)
     tid_mod_2 = arith_d.remsi(tid_mlir, c2)  # tid % 2
     row = arith_d.muli(c8, tid_mod_2)        # 8 * (tid % 2)
 
-    # col = 8 * (tid / 16) + ((tid % 16) / 2)
-    tid_div_16 = arith_d.divsi(tid_mlir, c16)      # tid / 16
-    col_part1 = arith_d.muli(c8, tid_div_16)       # 8 * (tid / 16)
+    col = arith_d.divsi(tid_mlir, c2)
+    col_bytes = arith_d.divsi(col, c8) # doesnt make any sense for col_bytes tho
 
-    tid_mod_16 = arith_d.remsi(tid_mlir, c16)      # tid % 16
-    tid_mod_16_div_2 = arith_d.divsi(tid_mod_16, c2)  # (tid % 16) / 2
-    col = arith_d.addi(col_part1, tid_mod_16_div_2)   # 8 * (tid / 16) + ((tid % 16) / 2)
+    # tid_div_16 = arith_d.divsi(tid_mlir, c16)      # tid / 16
+    # col_part1 = arith_d.muli(c8, tid_div_16)       # 8 * (tid / 16)
+
+    # tid_mod_16 = arith_d.remsi(tid_mlir, c16)      # tid % 16
+    # tid_mod_16_div_2 = arith_d.divsi(tid_mod_16, c2)  # (tid % 16) / 2
+    # col = arith_d.addi(col_part1, tid_mod_16_div_2)   # 8 * (tid / 16) + ((tid % 16) / 2)
 
     # offset = row * 32 + col
-    row_times_32 = arith_d.muli(row, c40)          # row * 32
+    row_times_32 = arith_d.muli(row, stride)          # row * 32
     offset = arith_d.addi(row_times_32, col)       # row * 32 + col
 
     address = arith_d.addi(smem_base, offset)         # smem_base + offset
@@ -658,7 +660,7 @@ def emit_hardware_transpose_intrinsic(
     vector_type: VectorType, start_indices, start_indices_wg, start_indices_th, stride, kb_src, kb_ir_type, hardware_constraint, emitter
 ) -> Value:
       tid = hardware_constraint.linearized_thread_id % hardware_constraint.threads_per_wave
-      final_address = tid_mapping_i8_16x16x32(kb_src, tid, emitter)
+      final_address = tid_mapping_i8_16x16x32(kb_src, tid, stride, emitter)
       i64_type = IntegerType.get_signless(64)
       final_address_i64 = arith_d.index_cast(i64_type, final_address)
       ptr_type = llvm_d.PointerType.get(address_space=3, context=kb_ir_type.context)
@@ -816,24 +818,20 @@ def handle_read(emitter: WaveEmitter, node: fx.Node):
         )
         memory_node = get_custom(memory)
         hardware_constraint = get_hardware_constraint(emitter.constraints)
-        breakpoint()
         use_hw_transpose = (
             not mask
             and hasattr(memory_node, "hardware_transpose")
             and memory_node.hardware_transpose == LDSTransposeRead.tr8_b64
             and subs_idxc(elements_per_thread) == 8
         )
-        breakpoint()
         if use_hw_transpose:
             # distributed shape is shape in shared mem. last dim is stride
-            # stride_expr = memory_node.distributed_shape[-1] # BLOCK_K + 8 
-            # stride = gen_sympy_index(add_emitter_subs(emitter), stride_expr) # symbolic -> mlir
+            stride_expr = memory_node.distributed_shape[-1] # BLOCK_K + 8 
+            stride = gen_sympy_index(add_emitter_subs(emitter), stride_expr) # symbolic -> mlir
             # breakpoint()
-            stride = None
             result = emit_hardware_transpose_intrinsic(
                 vector_type, start_indices, start_indices_wg, start_indices_th, stride, kb_src, kb_ir_type, hardware_constraint, emitter
             )
-            breakpoint()
         else:
             result = _create_vec_read_write(
                 emitter,
