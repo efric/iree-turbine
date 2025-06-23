@@ -169,7 +169,9 @@ def mark_hw_transpose(write: Write, new_writes: dict, read: Read, new_reads):
     with write.graph.inserting_before(write.fx_node):
         dest = get_custom(write.memory)
         dest.update_arg("hardware_transpose", LDSTransposeRead.tr8_b64)
-        # breakpoint()
+        transpose_shape = transpose_last2(dest.distributed_shape)
+        dest.update_arg("distributed_shape", transpose_shape)
+        breakpoint()
         # current_shape = list(dest.distributed_shape)
         # current_shape[-1] = ((current_shape[-1] + 511) // 512) * 512
         # dest.update_arg("distributed_shape", tuple(current_shape))

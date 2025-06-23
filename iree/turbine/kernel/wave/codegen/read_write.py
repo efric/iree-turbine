@@ -629,17 +629,85 @@ def tid_mapping_i8_16x16x32(kb_src, tid, stride, emitter):
     smem_base = memref_d.extract_aligned_pointer_as_index(kb_src)
     tid_mlir = gen_sympy_index(add_emitter_subs(emitter), tid)
 
+    c0 = arith_d.constant(IndexType.get(), 0)
     c2 = arith_d.constant(IndexType.get(), 2)
     c8 = arith_d.constant(IndexType.get(), 8)
     c16 = arith_d.constant(IndexType.get(), 16)
+    c32 = arith_d.constant(IndexType.get(), 32)
+    c64 = arith_d.constant(IndexType.get(), 64)
+    c256 = arith_d.constant(IndexType.get(), 300)
+
+    col = arith_d.divsi(tid_mlir, c2)
+    col = arith_d.remsi(col, c8)
+
+    row_section = arith_d.remsi(tid_mlir, c2)
+    row_group = arith_d.divsi(tid_mlir, c16)
+    row_group = arith_d.muli(row_group, c2)
+    row = arith_d.addi(row_section, row_group)
+
+    stride_offset = arith_d.muli(stride, c8)
+    row_offset = arith_d.muli(row, stride_offset)
+    offset = arith_d.addi(col, row_offset)
+    address = arith_d.addi(smem_base, offset)
+    return address
+
+    # return smem_base
+
+    # stride_offset = arith_d.muli(stride,c8)
+    # row_group = arith_d.remsi(tid_mlir, c2)
+    # row = arith_d.muli(row_group, stride_offset)
+    # col = arith_d.divsi(tid_mlir, c2)
+    # offset = arith_d.addi(row, col)
+    # address = arith_d.addi(smem_base, offset)
+
+    # stride_mul = arith_d.muli(stride, c8)
+    # offset = arith_d.muli(offset, stride_mul)
+    # tid_div_2 = arith_d.divsi(tid_mlir, c2)
+    # offset = arith_d.addi(offset, tid_div_2)
+    # offset = arith_d.divsi(tid_mlir, c2)
+    # address = arith_d.addi(smem_base, tid_mlir)
+    
+    # p1 = arith_d.remsi(tid_mlir, c2)
+    # p1 = arith_d.muli(p1, stride)
+
+    # p2 = arith_d.remsi(tid_mlir, c16)
+    # p2 = arith_d.muli(tid_mlir, c64)
+
+    # p3 = arith_d.remsi(tid_mlir, c16)
+    # p3 = arith_d.remsi(tid_mlir, c2)
+
+    # address = arith_d.addi(p1, p2)
+    # address = arith_d.addi(address, p3)
+
+
+    # col = arith_d.remsi(tid_mlir, c32)
+    # col = arith_d.divsi(col, c2)
+    # section = arith_d.remsi(tid_mlir, c32)
+    # row_offset = arith_d.remsi(tid_mlir, c2)
+    # row_offset = arith_d.muli(row_offset, c8)
+    # section_diff = arith_d.muli(section, c16)
+    # address = arith_d.addi(row_offset, section_diff)
+    # address = arith_d.addi(smem_base, address)
+
+    # tid_mod_2 = arith_d.remsi(tid_mlir, c2)  # tid % 2
+    # row = arith_d.muli(c8, tid_mod_2)        # 8 * (tid % 2)
+    # col = arith_d.divsi(tid_mlir, c2)
+
+    # curr_row = arith_d.muli(row, stride)
+    # address = arith_d.addi(curr_row, col)
+    return address
+
+    # thread_group = arith_d.divsi(tid_mlir, c32)  # 0 for threads 0-31, 1 for threads 32-63
+    # group_offset = arith_d.muli(thread_group, c256)  # or try c128, c256
+    # address = arith_d.addi(smem_base, group_offset)
     # c40 = arith_d.constant(IndexType.get(), stride)
 
     # row = 8 * (tid % 2)
-    tid_mod_2 = arith_d.remsi(tid_mlir, c2)  # tid % 2
-    row = arith_d.muli(c8, tid_mod_2)        # 8 * (tid % 2)
+    # tid_mod_2 = arith_d.remsi(tid_mlir, c2)  # tid % 2
+    # row = arith_d.muli(c8, tid_mod_2)        # 8 * (tid % 2)
 
-    col = arith_d.divsi(tid_mlir, c2)
-    col_bytes = arith_d.divsi(col, c8) # doesnt make any sense for col_bytes tho
+    # col = arith_d.divsi(tid_mlir, c2)
+    # col_bytes = arith_d.divsi(col, c8) # doesnt make any sense for col_bytes tho
 
     # tid_div_16 = arith_d.divsi(tid_mlir, c16)      # tid / 16
     # col_part1 = arith_d.muli(c8, tid_div_16)       # 8 * (tid / 16)
@@ -649,11 +717,14 @@ def tid_mapping_i8_16x16x32(kb_src, tid, stride, emitter):
     # col = arith_d.addi(col_part1, tid_mod_16_div_2)   # 8 * (tid / 16) + ((tid % 16) / 2)
 
     # offset = row * 32 + col
-    row_times_32 = arith_d.muli(row, stride)          # row * 32
-    offset = arith_d.addi(row_times_32, col)       # row * 32 + col
-
-    address = arith_d.addi(smem_base, offset)         # smem_base + offset
-    return address
+    # row_times_32 = arith_d.muli(row, stride)          # row * 32
+    # offset = arith_d.addi(row_times_32, col)       # row * 32 + col
+    # address = arith_d.addi(smem_base, offset)         # smem_base + offset
+    # thread_group = arith_d.divsi(tid_mlir, c32)
+    # offset = arith_d.muli(thread_group, c256)
+    # address = arith_d.addi(smem_base, offset)
+    # return address
+    # return address
 
 
 def emit_hardware_transpose_intrinsic(
