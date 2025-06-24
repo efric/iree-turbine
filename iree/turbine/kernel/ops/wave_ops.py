@@ -1541,6 +1541,7 @@ class Read(CustomOp):
     mapping: Optional[IndexMapping] = None
     mapping_dynamic_vals: tuple[fx.Node, ...] = ()
     _write_dependency: Optional[list[fx.Node]] = None
+    transpose = False
 
     @property
     def indexing_dims(self) -> list[IndexSymbol]:

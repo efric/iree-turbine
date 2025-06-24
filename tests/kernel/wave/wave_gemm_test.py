@@ -1284,7 +1284,8 @@ def testi8TransposeGemm(
 @require_e2e
 # @pytest.mark.parametrize("shape", [(256, 1280, 160)])
 @pytest.mark.parametrize("shape", [(16, 16, 32)])
-# @pytest.mark.parametrize("shape", [(16, 16, 16)])
+# @pytest.mark.parametrize("shape", [(128, 640, 80)])
+# 1024, 5120, 640
 # @pytest.mark.parametrize("shape", get_test_shapes("test_gemm"))
 @pytest.mark.parametrize(
     "enable_scheduling",
@@ -1387,12 +1388,12 @@ def testi8NontransposeGemm(
     gemm = wave_compile(options, gemm)
 
     randint_hi = 4
-    # a = device_randint(randint_hi, (shape[0], shape[2]), device='cuda', dtype=torch.int8)
-    # b = device_randint(randint_hi, (shape[2], shape[1]), device='cuda', dtype=torch.int8)
+    a = device_randint(randint_hi, (shape[0], shape[2]), device='cuda', dtype=torch.int8)
+    b = device_randint(randint_hi, (shape[2], shape[1]), device='cuda', dtype=torch.int8)
     # b = torch.arange(1, shape[1] + 1, device='cuda', dtype=torch.int8).unsqueeze(0).repeat(shape[2], 1)
     # b = device_zeros(shape[2], shape[1], device='cuda', dtype=torch.int8)
-    a = device_ones(shape[0], shape[2], device='cuda', dtype=torch.int8)
-    b = device_ones(shape[2], shape[1], device='cuda', dtype=torch.int8)
+    # a = device_ones(shape[0], shape[2], device='cuda', dtype=torch.int8)
+    # b = device_ones(shape[2], shape[1], device='cuda', dtype=torch.int8)
     c = device_zeros(shape[0], shape[1], dtype=torch.int32)
     asm = gemm(a, b, c)
     np_array = c.cpu().numpy()

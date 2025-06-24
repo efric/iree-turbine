@@ -43,6 +43,162 @@ Optimize shared -> reg for transpose using lds.tr{n} intrinsics
 TODO: extend support for more variants
 """
 
+def combine_index(
+    index1: dict[IndexSymbol, IndexSequence],
+    index2: dict[IndexSymbol, IndexSequence],
+    fastest_dim: IndexSymbol,
+    fastest_dim_vec_size: int,
+) -> dict[IndexSymbol, IndexSequence]:
+    """
+    This function takes two index sequences and combines them.
+    """
+    assert len(index1) == len(index2)
+    return {
+        key: IndexSequence(
+            index1[key].start + index2[key].start,
+            fastest_dim_vec_size if key == fastest_dim else 1,
+            1,
+        )
+        for key in index2
+    }
+
+def remove_thread_indexing(
+    index: dict[IndexSymbol, IndexSequence]
+) -> dict[IndexSymbol, IndexSequence]:
+    """
+    This function takes the index sequence for a global read and removes all
+    thread level indexing.
+    """
+    subs = {t: 0 for t in [THREAD_0, THREAD_1, THREAD_2, GPR_NUM]}
+    return {key: safe_subs(index[key], subs) for key in index}
+
+# def create_generic_hardware_transpose_index(
+#     original_index: dict, read: Read, constraints: list[Constraint]
+# ) -> dict:
+#     hardware_constraint = get_hardware_constraint(constraints)
+#     constraint_tile_size = {
+#         c.dim: c.tile_size for c in constraints
+#         if isinstance(c, (TilingConstraint, WorkgroupConstraint))
+#     }
+
+#     effective_shape = transpose_last2(read.type.symbolic_shape)
+#     materialized_shape = materialize_shape(constraint_tile_size, effective_shape)
+
+#     num_rows, num_cols = materialized_shape[-2:]
+#     elements_per_thread = read.elements_per_thread
+#     threads_per_wave = hardware_constraint.threads_per_wave
+
+#     total_elements = num_rows * num_cols
+#     max_elements_per_load = threads_per_wave * elements_per_thread
+
+#     if safe_subs(total_elements) <= safe_subs(max_elements_per_load):
+#         col_groups = ceildiv(num_cols, elements_per_thread)
+#         threads_per_col_group = threads_per_wave // col_groups
+#     else:
+#         threads_per_col_group = min(num_rows, threads_per_wave)
+#         col_groups = ceildiv(threads_per_wave, threads_per_col_group)
+
+#     logger.info(f"Generic HW transpose: {num_rows}x{num_cols} (total={total_elements}), "
+#                 f"threads={threads_per_wave}, col_groups={col_groups}, "
+#                 f"threads_per_col_group={threads_per_col_group}")
+
+#     global_index = remove_thread_indexing(original_index)
+
+#     linear_id = hardware_constraint.linearized_thread_id
+
+#     thread_row = linear_id % threads_per_col_group
+#     col_group = linear_id // threads_per_col_group
+#     thread_col = (col_group % col_groups) * elements_per_thread
+
+#     thread_row = thread_row % num_rows  # Wrap if more threads than rows
+#     thread_col = min(thread_col, num_cols - elements_per_thread)  # Clamp columns
+
+#     new_thread_index = {}
+#     last_two_dims = list(effective_shape[-2:])  # Get actual dimension symbols
+
+#     new_thread_index[last_two_dims[0]] = IndexSequence(thread_row, 1, 1)      # Row
+#     new_thread_index[last_two_dims[1]] = IndexSequence(thread_col, elements_per_thread, 1)  # Col
+
+#     final_index = combine_index(
+#         global_index,
+#         new_thread_index,
+#         last_two_dims[1],  # fastest_dim (column)
+#         elements_per_thread
+#     )
+
+#     for dim, index_seq in original_index.items():
+#         if dim not in final_index:
+#             final_index[dim] = index_seq
+
+#     return final_index
+
+# trying to learn from in thread transpose
+# def create_generic_hardware_transpose_index(
+#     original_index: dict, read: Read, constraints: list[Constraint]
+# ) -> dict:
+#     """
+#     Generic hardware transpose index using in_thread_transpose.py patterns
+#     """
+#     # Extract problem parameters
+#     hardware_constraint = get_hardware_constraint(constraints)
+#     constraint_tile_size = {
+#         c.dim: c.tile_size for c in constraints
+#         if isinstance(c, (TilingConstraint, WorkgroupConstraint))
+#     }
+
+#     effective_shape = transpose_last2(read.type.symbolic_shape)
+#     materialized_shape = materialize_shape(constraint_tile_size, effective_shape)
+
+#     num_rows, num_cols = materialized_shape[-2:]  # [32, 16]
+#     elements_per_thread = read.elements_per_thread  # 8
+#     threads_per_wave = hardware_constraint.threads_per_wave  # 64
+
+#     total_elements = num_rows * num_cols  # 32 * 16 = 512
+#     max_elements_per_load = threads_per_wave * elements_per_thread  # 64 * 8 = 512
+
+#     if total_elements > max_elements_per_load:
+#         raise ValueError(f"Matrix too large: {total_elements} > {max_elements_per_load}")
+
+#     col_groups = ceildiv(num_cols, elements_per_thread)  # 16/8 = 2
+#     threads_per_col_group = threads_per_wave // col_groups  # 64/2 = 32
+
+#     logger.info(f"Generic HW transpose: {num_rows}x{num_cols}, "
+#                 f"threads={threads_per_wave}, col_groups={col_groups}, "
+#                 f"threads_per_col_group={threads_per_col_group}")
+
+#     global_index = remove_thread_indexing(original_index)
+
+#     linear_id = hardware_constraint.linearized_thread_id
+
+#     tiled_shape = [
+#         ceildiv(num_rows, threads_per_col_group),  # [32/32] = [1]
+#         ceildiv(num_cols, elements_per_thread)     # [16/8] = [2]
+#     ]
+
+#     thread_row = linear_id % threads_per_col_group  # 0-31
+#     col_group = linear_id // threads_per_col_group  # 0 or 1
+#     thread_col = col_group * elements_per_thread    # 0 or 8
+
+#     new_thread_index = {}
+#     last_two_dims = list(effective_shape[-2:])  # Get actual dimension symbols
+
+#     new_thread_index[last_two_dims[0]] = IndexSequence(thread_row, 1, 1)      # Row
+#     new_thread_index[last_two_dims[1]] = IndexSequence(thread_col, elements_per_thread, 1)  # Col
+
+#     final_index = combine_index(
+#         global_index,
+#         new_thread_index,
+#         last_two_dims[1],  # fastest_dim (column)
+#         elements_per_thread
+#     )
+
+#     # Handle any remaining dimensions not in last_two_dims
+#     for dim, index_seq in original_index.items():
+#         if dim not in final_index:
+#             final_index[dim] = index_seq
+
+#     return final_index
+
 
 def is_transpose_read(node: fx.Node) -> bool:
     read = get_custom(node)
@@ -149,7 +305,7 @@ def mark_hardware_transpose_candidates(
                 rw_mem = (read.memory, write.memory)
                 if rw_mem not in rw_mem_seen:
                     rw_mem_seen.add(rw_mem)
-                    mark_hw_transpose(write, new_writes, read, new_reads)
+                    mark_hw_transpose(write, new_writes, read, new_reads, constraints)
 
     for old_read, new_read in new_reads.items():
         new_read_fx_node = new_read[0] 
@@ -164,8 +320,41 @@ def mark_hardware_transpose_candidates(
     if new_writes:
         update_write_dependencies(new_writes, trace)
 
+def modify_index_for_full_coverage(original_index: dict, constraints: list[Constraint]) -> dict:
+    """
+    Modify the index to access all 32 rows instead of just 16
+    Change Mod($T0, 16) to Mod($T0, 32) in the N dimension
+    """
 
-def mark_hw_transpose(write: Write, new_writes: dict, read: Read, new_reads):
+    modified_index = {}
+    for dim, index_seq in original_index.items():
+        if dim.name == 'N': 
+            start_expr = index_seq.start
+
+            modified_expr = start_expr.subs(
+                sympy.Mod(THREAD_0, 16),
+                sympy.Mod(THREAD_0, 32)
+            )
+
+            modified_index[dim] = IndexSequence(
+                modified_expr,
+                index_seq.size,
+                index_seq.stride
+            )
+        elif dim.name == 'K': #fix out of bounds
+              start_expr = index_seq.start
+
+              old_pattern = 8 * sympy.floor(sympy.Mod(THREAD_0, 64) / 16)
+              new_pattern = 8 * sympy.floor(THREAD_0 / 32) 
+
+              modified_expr = start_expr.subs(old_pattern, new_pattern)
+              modified_index[dim] = IndexSequence(modified_expr, index_seq.size, index_seq.stride)
+        else:
+            modified_index[dim] = index_seq
+
+    return modified_index
+
+def mark_hw_transpose(write: Write, new_writes: dict, read: Read, new_reads, constraints):
     with write.graph.inserting_before(write.fx_node):
         dest = get_custom(write.memory)
         dest.update_arg("hardware_transpose", LDSTransposeRead.tr8_b64)
@@ -185,15 +374,23 @@ def mark_hw_transpose(write: Write, new_writes: dict, read: Read, new_reads):
             mapping_dynamic_vals=write.mapping_dynamic_vals,
         ).add_to_graph(write.graph)
 
-        hw_write.index = write.index
+        # modified_index = create_generic_hardware_transpose_index(write.index, read, constraints)
+        modified_index = modify_index_for_full_coverage(write.index, constraints)
+        hw_write.index = modified_index
+        # hw_write.index = write.index
+        # breakpoint()
         new_writes[write.memory].append(hw_write)
 
         logger.info(f"Marked hardware transpose write: {hw_write}")
 
     mapping = read.mapping
     if read.mapping is not None:
+        # dest = get_custom(read.memory)
+        # dest.update_arg("hardware_transpose", LDSTransposeRead.tr8_b64)
+        # breakpoint()
         # this is just meant to give contiguous global loads
         src_shape = transpose_last2(read.type.symbolic_shape)
+        # breakpoint()
         out_mapping = {
             k: IndexMapping.iterator(i)
             for i, k in enumerate(src_shape)
@@ -204,6 +401,7 @@ def mark_hw_transpose(write: Write, new_writes: dict, read: Read, new_reads):
         #      k: safe_subs(v, subs, simultaneous=True)
         #      for k, v in mapping.input_mapping.items()
         # }
+        # breakpoint()
         mapping = IndexMapping(
             num_iterators=len(out_mapping),
             inputs=input_mapping,
@@ -234,7 +432,12 @@ otherwise you get
                     mapping=mapping,
                     mapping_dynamic_vals=read.mapping_dynamic_vals,
                 ).add_to_graph(read.graph)
-                new_read.index = read.index
+                modified_index = modify_index_for_full_coverage(read.index, constraints)
+                # modified_index = create_generic_hardware_transpose_index(read.index, read, constraints)
+                new_read.index = modified_index
+                # breakpoint()
+                new_read.transpose = True
+                # new_read.index = read.index
                 new_read_custom = get_custom(new_read)
                 new_read_custom.infer_type()
                 if read.mapping_dynamic_vals:

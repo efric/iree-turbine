@@ -637,19 +637,28 @@ def tid_mapping_i8_16x16x32(kb_src, tid, stride, emitter):
     c64 = arith_d.constant(IndexType.get(), 64)
     c256 = arith_d.constant(IndexType.get(), 300)
 
-    col = arith_d.divsi(tid_mlir, c2)
-    col = arith_d.remsi(col, c8)
-
-    row_section = arith_d.remsi(tid_mlir, c2)
-    row_group = arith_d.divsi(tid_mlir, c16)
-    row_group = arith_d.muli(row_group, c2)
-    row = arith_d.addi(row_section, row_group)
-
-    stride_offset = arith_d.muli(stride, c8)
-    row_offset = arith_d.muli(row, stride_offset)
-    offset = arith_d.addi(col, row_offset)
+    row = arith_d.divsi(tid_mlir, c2)
+    col = arith_d.remsi(tid_mlir, c2)
+    col = arith_d.muli(col, c8)
+    offset = arith_d.muli(row, stride)
+    offset = arith_d.addi(offset, col)
     address = arith_d.addi(smem_base, offset)
+
     return address
+
+    # col = arith_d.divsi(tid_mlir, c2)
+    # col = arith_d.remsi(col, c8)
+
+    # row_section = arith_d.remsi(tid_mlir, c2)
+    # row_group = arith_d.divsi(tid_mlir, c16)
+    # row_group = arith_d.muli(row_group, c2)
+    # row = arith_d.addi(row_section, row_group)
+
+    # stride_offset = arith_d.muli(stride, c8)
+    # row_offset = arith_d.muli(row, stride_offset)
+    # offset = arith_d.addi(col, row_offset)
+    # address = arith_d.addi(smem_base, offset)
+    # return address
 
     # return smem_base
 
@@ -659,6 +668,7 @@ def tid_mapping_i8_16x16x32(kb_src, tid, stride, emitter):
     # col = arith_d.divsi(tid_mlir, c2)
     # offset = arith_d.addi(row, col)
     # address = arith_d.addi(smem_base, offset)
+    # return address
 
     # stride_mul = arith_d.muli(stride, c8)
     # offset = arith_d.muli(offset, stride_mul)
@@ -695,7 +705,7 @@ def tid_mapping_i8_16x16x32(kb_src, tid, stride, emitter):
 
     # curr_row = arith_d.muli(row, stride)
     # address = arith_d.addi(curr_row, col)
-    return address
+    # return address
 
     # thread_group = arith_d.divsi(tid_mlir, c32)  # 0 for threads 0-31, 1 for threads 32-63
     # group_offset = arith_d.muli(thread_group, c256)  # or try c128, c256
@@ -877,7 +887,7 @@ def handle_read(emitter: WaveEmitter, node: fx.Node):
     vector_type = VectorType.get(vector_shape, element_type)
     input_shape = _get_symbolic_shape(memory)
     elements_per_thread = cast_py_literal(emitter, elements_per_thread)
-    if get_custom(node).has_identity_mapping():
+    if get_custom(node).has_identity_mapping() or (hasattr(node, "transpose") and node.transpose):
         start_indices, start_indices_wg, start_indices_th = _build_start_indices(
             emitter, index
         )
