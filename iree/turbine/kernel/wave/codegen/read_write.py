@@ -637,14 +637,39 @@ def tid_mapping_i8_16x16x32(kb_src, tid, stride, emitter):
     c64 = arith_d.constant(IndexType.get(), 64)
     c256 = arith_d.constant(IndexType.get(), 300)
 
-    row = arith_d.divsi(tid_mlir, c2)
-    col = arith_d.remsi(tid_mlir, c2)
+    group_id = arith_d.divsi(tid_mlir, c16)
+    
+    tid_in_group = arith_d.remsi(tid_mlir, c16)
+    row_in_group = arith_d.divsi(tid_in_group, c2)
+    col = arith_d.remsi(tid_in_group, c2)
     col = arith_d.muli(col, c8)
+    group_base_row = arith_d.muli(group_id, c8)
+    row = arith_d.addi(group_base_row, row_in_group)
     offset = arith_d.muli(row, stride)
     offset = arith_d.addi(offset, col)
     address = arith_d.addi(smem_base, offset)
-
+    
     return address
+
+    # group_id = arith_d.divsi(tid_mlir, c16)
+    # group_id_2 = arith_d.divsi(group_id, c2)
+    # tid_in_group = arith_d.remsi(tid_mlir, c16)
+    # row = arith_d.muli(group_id, c8)
+    # row = arith_d.addi(row, group_id_2)
+    # col = arith_d.remsi(tid_in_group, c2)
+    # col = arith_d.muli(col, c8)
+    # offset = arith_d.muli(row, stride)
+    # offset = arith_d.addi(offset, col)
+    # address = arith_d.addi(smem_base, offset)
+
+    # row = arith_d.divsi(tid_mlir, c2)
+    # col = arith_d.remsi(tid_mlir, c2)
+    # col = arith_d.muli(col, c8)
+    # offset = arith_d.muli(row, stride)
+    # offset = arith_d.addi(offset, col)
+    # address = arith_d.addi(smem_base, offset)
+
+    # return address
 
     # col = arith_d.divsi(tid_mlir, c2)
     # col = arith_d.remsi(col, c8)

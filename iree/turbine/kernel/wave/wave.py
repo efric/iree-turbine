@@ -536,7 +536,7 @@ class LaunchableWave(Launchable):
             partial(decompose_vmma_ops, trace, self.constraints),
             partial(decompose_dot_mma, trace, self.constraints),
             partial(hoist_loop_invariant_ops, trace, self.constraints),
-            partial(mark_hardware_transpose_candidates, trace, self.constraints),
+            # partial(mark_hardware_transpose_candidates, trace, self.constraints),
             partial(global_to_shared_gathers, trace, self.constraints),
             partial(minimize_global_loads, trace, self.constraints),
             partial(apply_shared_memory_indexing_corrections, trace, self.constraints),
