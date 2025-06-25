@@ -124,6 +124,103 @@ def update_index_dims(src_node: fx.Node, target_expr: IndexExpr):
         src_node.index[intersect_key] = target_expr[intersect_key]
 
 
+def is_hardware_transpose_candidate(read: Read) -> bool:
+    """Check if this read feeds into hardware transpose memory"""
+    for write in read.users:
+        if isinstance(write, Write):
+            write_memory = get_custom(write.memory)
+            if hasattr(write_memory, 'hardware_transpose'):
+                return True
+    return False
+
+
+def calculate_hardware_transpose_coverage(
+    read: Read, 
+    constraint_tile_size: dict[IndexSymbol, int],
+    max_elements_per_load: int
+) -> int:
+    """
+    Calculate coverage needed for hardware transpose.
+    Hardware transpose works with 16-thread groups handling specific tile patterns.
+    For 32x16 matrix: K=32, non-K=16, we need multiple reads to ensure
+    different 16-thread groups can access different parts of the data.
+    """
+    materialized_shape = materialize_shape(constraint_tile_size, read.type.symbolic_shape)
+    total_elements = prod(materialized_shape)
+    
+    # Hardware transpose intrinsics work on 16-thread groups
+    # Each group handles 8x16 tiles (8 elements per thread, 16 threads)
+    # For 32x16 matrix: 2 groups in K dimension (32/16), 1 group in non-K (16/16)
+    # For 32x64 matrix: 2 groups in K dimension (32/16), 4 groups in non-K (64/16)
+    
+    rows, cols = materialized_shape[-2:]
+    
+    # Calculate minimum reads needed for hardware transpose tile coverage
+    # Each 16-thread group needs access to data in a specific pattern
+    hw_transpose_threads_per_group = 16
+    
+    # For hardware transpose, ensure we have enough reads to cover all tile regions
+    # that will be accessed by different thread groups
+    tiles_in_k_dim = ceildiv(rows, hw_transpose_threads_per_group)  # e.g., 32/16 = 2
+    tiles_in_non_k_dim = ceildiv(cols, hw_transpose_threads_per_group)  # e.g., 16/16 = 1 or 64/16 = 4
+    
+    # Each read should be able to serve multiple tiles, but we need enough
+    # reads to ensure all thread groups have access to their required data
+    min_reads_for_hw_transpose = max(tiles_in_k_dim, 1)
+    
+    # Also respect the normal coverage requirement
+    min_reads_for_coverage = ceildiv(total_elements, max_elements_per_load)
+    
+    # Take the maximum to ensure both requirements are met
+    return max(min_reads_for_hw_transpose, min_reads_for_coverage)
+
+
+def construct_hw_transpose_access_pattern(
+    index: dict[IndexSymbol, IndexSequence],
+    thread_id: IndexExpr,
+    load_elems_per_thread: int,
+    shape: list[int],
+) -> dict[IndexSymbol, IndexSequence]:
+    """
+    Construct access pattern for hardware transpose that preserves memory layout.
+    Unlike construct_min_global_access_pattern, this doesn't transpose the data.
+    Key: preserves K,N order for Matrix B instead of transposing to N,K.
+    """
+    # Remove thread indexing (same as normal case)
+    thread_ids = [THREAD_0, THREAD_1, THREAD_2, GPR_NUM]
+    new_index = {key: index[key].subs({t: 0 for t in thread_ids}) for key in index}
+    
+    # Key difference: Use original shape order (not transposed)
+    # This preserves the original matrix layout for hardware transpose
+    nd_index = delinearize_index(thread_id, shape)
+    
+    # Update index with offsets
+    for i, key in enumerate(index.keys()):
+        new_index[key].start += nd_index[i]
+        new_index[key].size = load_elems_per_thread if i == len(index.keys()) - 1 else 1
+        new_index[key].stride = 1
+    
+    return new_index
+
+
+def create_hw_transpose_mapping(original_mapping: IndexMapping) -> IndexMapping:
+    """
+    Create mapping for hardware transpose that preserves original layout.
+    For Matrix B: preserves K,N order instead of transposing to N,K.
+    """
+    if original_mapping is None:
+        return None
+        
+    # For hardware transpose, preserve the original order
+    # This prevents double transpose (global->shared transpose + hardware transpose)
+    return IndexMapping(
+        num_iterators=original_mapping.num_iterators,
+        inputs=original_mapping.inputs.copy(),  # Preserve original order
+        outputs=original_mapping.outputs.copy(), # Preserve original order  
+        dynamic_val_mappings=original_mapping.dynamic_val_mappings
+    )
+
+
 def identify_optimizable_loads(
     global_read_nodes: list[fx.Node],
     constraint_tile_size: dict[IndexSymbol, int],
@@ -162,9 +259,21 @@ def identify_optimizable_loads(
             continue
 
         total_number_of_elements = prod(materialized_shape)
-        expected_number_of_loads = ceildiv(
-            total_number_of_elements, max_elements_per_load
-        )
+        
+        # Check if this is a hardware transpose candidate
+        is_hw_transpose = is_hardware_transpose_candidate(custom)
+        
+        if is_hw_transpose:
+            # Use hardware transpose specific coverage calculation
+            expected_number_of_loads = calculate_hardware_transpose_coverage(
+                custom, constraint_tile_size, max_elements_per_load
+            )
+        else:
+            # Use normal coverage calculation
+            expected_number_of_loads = ceildiv(
+                total_number_of_elements, max_elements_per_load
+            )
+            
         actual_number_of_loads = len(
             [x for x in global_read_nodes if get_custom(x).memory == custom.memory]
         )
@@ -216,6 +325,7 @@ def identify_optimizable_loads(
             expanded_dynamic_vals,
             memory_load_elems_per_thread,
             memory_max_elements_per_load,
+            is_hw_transpose,  # Add hardware transpose flag
         )
     return optimizable_loads
 
@@ -229,13 +339,16 @@ def add_optimized_nodes(
     Add optimized global read nodes and shared write nodes to the graph.
     """
     optimized_writes = defaultdict(list)
-    for memory, (
-        expected_number_of_loads,
-        custom_loads,
-        expanded_dynamic_vals,
-        load_elems_per_thread,
-        max_elements_per_load,
-    ) in optimizable_loads.items():
+    for memory, load_info in optimizable_loads.items():
+        
+        # Handle both old format (5 elements) and new format (6 elements with hw_transpose flag)
+        if len(load_info) == 6:
+            (expected_number_of_loads, custom_loads, expanded_dynamic_vals, 
+             load_elems_per_thread, max_elements_per_load, is_hw_transpose) = load_info
+        else:
+            (expected_number_of_loads, custom_loads, expanded_dynamic_vals, 
+             load_elems_per_thread, max_elements_per_load) = load_info
+            is_hw_transpose = False
         access_pattern: dict[IndexSymbol, IndexSequence] = custom_loads[0].index
         custom = custom_loads[0]
         if expanded_dynamic_vals:
@@ -252,12 +365,24 @@ def add_optimized_nodes(
                 materialized_shape = materialize_shape(
                     constraint_tile_size, custom.type.symbolic_shape
                 )
-                read.index = construct_min_global_access_pattern(
-                    access_pattern,
-                    global_offset,
-                    load_elems_per_thread,
-                    materialized_shape,
-                )
+                
+                # Use hardware transpose specific access pattern if applicable
+                if is_hw_transpose:
+                    read.index = construct_hw_transpose_access_pattern(
+                        access_pattern,
+                        global_offset,
+                        load_elems_per_thread,
+                        materialized_shape,
+                    )
+                    # Also update mapping for hardware transpose
+                    read.update_arg("mapping", create_hw_transpose_mapping(custom.mapping))
+                else:
+                    read.index = construct_min_global_access_pattern(
+                        access_pattern,
+                        global_offset,
+                        load_elems_per_thread,
+                        materialized_shape,
+                    )
                 if custom.mapping_dynamic_vals:
                     # Update the dynamic vals' index expressions to match the min global access patterns.
                     for dyn_val in expanded_dynamic_vals[i]:

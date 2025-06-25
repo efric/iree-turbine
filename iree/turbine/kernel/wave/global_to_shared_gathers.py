@@ -28,6 +28,7 @@ from .minimize_global_loads import (
     identify_optimizable_loads,
     update_write_dependencies,
     SharedReadMetadata,
+    is_hardware_transpose_candidate,
 )
 
 """
@@ -83,6 +84,7 @@ def is_valid_global_gather(node: fx.Node) -> bool:
         and subs_idxc(custom.memory_type.address_space) == GLOBAL_ADDRESS_SPACE
         and has_write_shared_user(custom)
         and is_gather(custom)
+        and not is_hardware_transpose_candidate(custom)  # Skip hardware transpose candidates
     )
 
 
