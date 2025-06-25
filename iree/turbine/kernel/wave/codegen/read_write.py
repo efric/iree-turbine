@@ -648,6 +648,7 @@ def tid_mapping_i8_16x16x32(kb_src, tid, stride, emitter):
     offset = arith_d.muli(row, stride)
     offset = arith_d.addi(offset, col)
     address = arith_d.addi(smem_base, offset)
+    breakpoint()
     
     return address
 
@@ -912,7 +913,7 @@ def handle_read(emitter: WaveEmitter, node: fx.Node):
     vector_type = VectorType.get(vector_shape, element_type)
     input_shape = _get_symbolic_shape(memory)
     elements_per_thread = cast_py_literal(emitter, elements_per_thread)
-    if get_custom(node).has_identity_mapping() or (hasattr(node, "transpose") and node.transpose):
+    if get_custom(node).has_identity_mapping() or hasattr(get_custom(memory), "hardware_transpose"):
         start_indices, start_indices_wg, start_indices_th = _build_start_indices(
             emitter, index
         )

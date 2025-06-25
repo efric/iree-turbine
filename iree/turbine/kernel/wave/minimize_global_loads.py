@@ -151,6 +151,14 @@ def identify_optimizable_loads(
         if is_transposed_read(custom) and len(custom.mapping_dynamic_vals) > 0:
             if not allow_dynamic_transposed:
                 continue
+        
+        for write in custom.users:
+            if isinstance(write, Write):
+                write_memory = get_custom(write.memory)
+                if hasattr(write_memory, 'hardware_transpose'):
+                    breakpoint()
+                    processed_memories.add(custom.memory)
+                    continue
 
         processed_memories.add(custom.memory)
         symbolic_shape = custom.type.symbolic_shape
