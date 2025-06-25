@@ -364,7 +364,13 @@ def add_optimized_nodes(
             assert len(expanded_dynamic_vals) == expected_number_of_loads
         for i in range(expected_number_of_loads):
             with custom.graph.inserting_before(custom.fx_node):
-                read = Read(memory, load_elems_per_thread, custom.mapping).add_to_graph(
+                # Choose mapping based on hardware transpose vs normal case
+                if is_hw_transpose:
+                    mapping = create_hw_transpose_mapping(custom.mapping)
+                else:
+                    mapping = custom.mapping
+                    
+                read = Read(memory, load_elems_per_thread, mapping).add_to_graph(
                     custom.graph
                 )
                 global_offset = (
@@ -383,8 +389,6 @@ def add_optimized_nodes(
                         load_elems_per_thread,
                         materialized_shape,
                     )
-                    # Also update mapping for hardware transpose
-                    read.update_arg("mapping", create_hw_transpose_mapping(custom.mapping))
                 else:
                     read.index = construct_min_global_access_pattern(
                         access_pattern,
