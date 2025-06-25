@@ -571,7 +571,43 @@ def modify_index_for_full_coverage(original_index: dict, constraints: list[Const
     return modified_index
 
 def mark_hw_transpose(write: Write, new_writes: dict, read: Read, new_reads, constraints):
-    """Only mark memory for hardware transpose - don't modify anything else"""
+    """Mark memory for hardware transpose and create new reads/writes with transpose flag"""
+    # Mark the memory for hardware transpose
     dest = get_custom(write.memory)
     dest.update_arg("hardware_transpose", LDSTransposeRead.tr8_b64)
+    
+    # Create new write for hardware transpose  
+    with write.graph.inserting_before(write.fx_node):
+        hw_write = Write(
+            write.register_,
+            write.memory,
+            write.elements_per_thread,
+            mapping=write.mapping,
+            mapping_dynamic_vals=write.mapping_dynamic_vals,
+        ).add_to_graph(write.graph)
+        # Let optimization passes handle the index - don't modify here
+        hw_write.index = write.index
+        new_writes[write.memory].append(hw_write)
+    
+    # Create new read with transpose flag to prevent gather/scatter construction
+    with read.graph.inserting_before(read.fx_node):
+        new_read = Read(
+            read.memory,
+            read.elements_per_thread,
+            mapping=read.mapping,
+            mapping_dynamic_vals=read.mapping_dynamic_vals,
+        ).add_to_graph(read.graph)
+        # Critical: set transpose = True to prevent gather/scatter in handle_read
+        new_read.transpose = True
+        # Let optimization passes handle the index - don't modify here  
+        new_read.index = read.index
+        new_read_custom = get_custom(new_read)
+        new_read_custom.infer_type()
+        if read.mapping_dynamic_vals:
+            update_read_mapping_dynamic_values(new_read_custom)
+        # Initialize as list if not exists, then append
+        if read.fx_node not in new_reads:
+            new_reads[read.fx_node] = []
+        new_reads[read.fx_node].append(new_read)
+    
     logger.info(f"Marked hardware transpose for memory: {dest}")
