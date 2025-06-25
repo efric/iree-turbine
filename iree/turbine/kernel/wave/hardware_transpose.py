@@ -76,6 +76,81 @@ def create_generic_hardware_transpose_index(
     original_index: dict, read: Read, constraints: list[Constraint]
 ) -> dict:
     """
+    Generic hardware transpose index calculation
+    """
+    hardware_constraint = get_hardware_constraint(constraints)
+    constraint_tile_size = {
+        c.dim: c.tile_size for c in constraints
+        if isinstance(c, (TilingConstraint, WorkgroupConstraint))
+    }
+
+    effective_shape = transpose_last2(read.type.symbolic_shape)
+    materialized_shape = materialize_shape(constraint_tile_size, effective_shape)
+
+    # Get concrete values using subs_idxc (like in_thread_transpose.py does)
+    tile_rows = subs_idxc(materialized_shape[-2])  # 32 for Matrix B
+    tile_cols = subs_idxc(materialized_shape[-1])  # 64 for Matrix B
+    elements_per_thread = subs_idxc(read.elements_per_thread)  # 8
+
+    # FIX: Check for THREAD_1 correctly using free_symbols
+    has_thread_y = False
+    for index_seq in original_index.values():
+        if THREAD_1 in index_seq.start.free_symbols:
+            has_thread_y = True
+            break
+
+    logger.info(f"Hardware transpose: {tile_rows}x{tile_cols}, has_thread_y={has_thread_y}")
+
+    # Extract global offsets (like in_thread_transpose.py:203)
+    global_index = remove_thread_indexing(original_index)
+
+    # Create new thread-local index
+    new_thread_index = {}
+    last_two_dims = list(effective_shape[-2:])
+
+    if has_thread_y:
+        # Multi-wave case: Need to distribute 128x2=256 threads across 32x64 matrix
+        # Each thread loads 8 elements, so capacity = 256*8 = 2048 elements
+        # Matrix B = 32*64 = 2048 elements (perfect fit)
+
+        # Pattern that should generate: (s0 floordiv 4) mod 32 for rows
+        thread_row = sympy.Mod(sympy.floor(THREAD_0 / 4), tile_rows)
+
+        # Pattern for columns using both thread dimensions
+        thread_col = THREAD_1 * (tile_cols // 2) + sympy.Mod(THREAD_0, 4) * elements_per_thread
+
+    else:
+        # Single wave case (original working 32x16)
+        linear_id = hardware_constraint.linearized_thread_id
+        col_groups = ceildiv(tile_cols, elements_per_thread)
+        threads_per_col_group = hardware_constraint.threads_per_wave // col_groups
+
+        thread_row = sympy.Mod(linear_id, threads_per_col_group)
+        col_group = sympy.floor(linear_id / threads_per_col_group)
+        thread_col = col_group * elements_per_thread
+
+    new_thread_index[last_two_dims[0]] = IndexSequence(thread_row, 1, 1)
+    new_thread_index[last_two_dims[1]] = IndexSequence(thread_col, elements_per_thread, 1)
+
+    # Combine with global offset (like in_thread_transpose.py:231-236)
+    final_index = combine_index(
+        global_index,
+        new_thread_index,
+        last_two_dims[1],
+        elements_per_thread
+    )
+
+    # Preserve other dimensions
+    for dim, index_seq in original_index.items():
+        if dim not in final_index:
+            final_index[dim] = index_seq
+
+    return final_index
+
+def create_generic_hardware_transpose_index(
+    original_index: dict, read: Read, constraints: list[Constraint]
+) -> dict:
+    """
     Generic hardware transpose index - handles workgroup tiles, not full matrices
     """
     # Extract problem parameters
