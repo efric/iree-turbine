@@ -166,7 +166,9 @@ def calculate_hardware_transpose_coverage(
     
     # Each read should be able to serve multiple tiles, but we need enough
     # reads to ensure all thread groups have access to their required data
-    min_reads_for_hw_transpose = max(tiles_in_k_dim, 1)
+    # For hardware transpose, we need coverage of the larger dimension to ensure
+    # all thread groups can access their data regions
+    min_reads_for_hw_transpose = max(tiles_in_k_dim, tiles_in_non_k_dim)
     
     # Also respect the normal coverage requirement
     min_reads_for_coverage = ceildiv(total_elements, max_elements_per_load)
