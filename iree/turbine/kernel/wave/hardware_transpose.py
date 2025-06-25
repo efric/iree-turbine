@@ -29,6 +29,8 @@ from .minimize_global_loads import (
     is_transposed_read,
     materialize_shape,
     update_write_dependencies,
+    calculate_hardware_transpose_coverage,
+    construct_hw_transpose_access_pattern,
 )
 from .global_to_shared_gathers import update_read_mapping_dynamic_values
 from ..ops.wave_ops import Extract, Read, Write, Reshape
@@ -571,7 +573,7 @@ def modify_index_for_full_coverage(original_index: dict, constraints: list[Const
     return modified_index
 
 def mark_hw_transpose(write: Write, new_writes: dict, read: Read, new_reads, constraints):
-    """Mark memory for hardware transpose and create new reads/writes with transpose flag"""
+    """Mark memory for hardware transpose and create new read with transpose flag"""
     # Mark the memory for hardware transpose
     dest = get_custom(write.memory)
     dest.update_arg("hardware_transpose", LDSTransposeRead.tr8_b64)
@@ -585,7 +587,6 @@ def mark_hw_transpose(write: Write, new_writes: dict, read: Read, new_reads, con
             mapping=write.mapping,
             mapping_dynamic_vals=write.mapping_dynamic_vals,
         ).add_to_graph(write.graph)
-        # Let optimization passes handle the index - don't modify here
         hw_write.index = write.index
         new_writes[write.memory].append(hw_write)
     
@@ -599,7 +600,6 @@ def mark_hw_transpose(write: Write, new_writes: dict, read: Read, new_reads, con
         ).add_to_graph(read.graph)
         # Critical: set transpose = True to prevent gather/scatter in handle_read
         new_read.transpose = True
-        # Let optimization passes handle the index - don't modify here  
         new_read.index = read.index
         new_read_custom = get_custom(new_read)
         new_read_custom.infer_type()

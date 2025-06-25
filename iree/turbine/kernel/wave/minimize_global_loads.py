@@ -279,8 +279,15 @@ def identify_optimizable_loads(
         actual_number_of_loads = len(
             [x for x in global_read_nodes if get_custom(x).memory == custom.memory]
         )
-        if expected_number_of_loads >= actual_number_of_loads:
-            continue
+        
+        # For hardware transpose, we need MORE loads if we don't have enough
+        # For normal optimization, we reduce loads if we have too many
+        if is_hw_transpose:
+            if actual_number_of_loads >= expected_number_of_loads:
+                continue  # Already have enough loads for hardware transpose
+        else:
+            if expected_number_of_loads >= actual_number_of_loads:
+                continue  # Don't have excess loads to reduce
 
         expanded_dynamic_vals = None
         memory_load_elems_per_thread = min(
