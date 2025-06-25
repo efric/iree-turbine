@@ -1643,6 +1643,9 @@ class Read(CustomOp):
 
         return False
 
+    def has_hw_transpose(self) -> bool:
+        return self.transpose
+
     def is_contiguous_vec(self) -> bool:
         """Check if op can be lowered to contiguous vector ops
 

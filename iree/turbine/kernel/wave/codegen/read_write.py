@@ -913,7 +913,11 @@ def handle_read(emitter: WaveEmitter, node: fx.Node):
     vector_type = VectorType.get(vector_shape, element_type)
     input_shape = _get_symbolic_shape(memory)
     elements_per_thread = cast_py_literal(emitter, elements_per_thread)
-    if get_custom(node).has_identity_mapping() or hasattr(get_custom(memory), "hardware_transpose"):
+
+    if (hasattr(node, "transpose") and node.transpose):
+        breakpoint()
+
+    if get_custom(node).has_identity_mapping() or hasattr(get_custom(memory), "hardware_transpose") or (hasattr(node, "transpose") and node.transpose):
         start_indices, start_indices_wg, start_indices_th = _build_start_indices(
             emitter, index
         )
@@ -932,6 +936,7 @@ def handle_read(emitter: WaveEmitter, node: fx.Node):
             and subs_idxc(elements_per_thread) == 8
         )
         if use_hw_transpose:
+            breakpoint()
             # distributed shape is shape in shared mem. last dim is stride
             stride_expr = memory_node.distributed_shape[-1] # BLOCK_K + 8 
             stride = gen_sympy_index(add_emitter_subs(emitter), stride_expr) # symbolic -> mlir

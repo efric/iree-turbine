@@ -78,6 +78,12 @@ and the load contiguously from global memory.
 
 def is_valid_global_gather(node: fx.Node) -> bool:
     custom = get_custom(node)
+    for write in custom.users:
+        if isinstance(write, Write):
+            write_memory = get_custom(write.memory)
+            if hasattr(write_memory, 'hardware_transpose'):
+                breakpoint()
+                return False  # Skip global gather optimization
     return (
         isinstance(custom, Read)
         and subs_idxc(custom.memory_type.address_space) == GLOBAL_ADDRESS_SPACE

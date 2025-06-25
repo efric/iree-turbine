@@ -1324,8 +1324,8 @@ def testi8NontransposeGemm(
     Each wave handles 32x32 elements
     '''
     constraints += [tkw.TilingConstraint(K, BLOCK_K)]
-    constraints += [tkw.WaveConstraint(M, BLOCK_M)]
-    constraints += [tkw.WaveConstraint(N, BLOCK_N)]
+    constraints += [tkw.WaveConstraint(M, BLOCK_M )]
+    constraints += [tkw.WaveConstraint(N, BLOCK_N )]
 
     constraints += [
         tkw.HardwareConstraint(
@@ -1413,6 +1413,7 @@ def testi8NontransposeGemm(
     a.cpu().to(torch.int32),
     b.cpu().to(torch.int32),
     )
+    np.savetxt("tensor2.csv", torch_ref, fmt="%d", delimiter=",")
     breakpoint()
     assert_close(c.to(torch.int32), torch_ref, atol=1e-2, rtol=1e-2, check_device=False)
     # iree_ref = device_zeros(shape[0], shape[1], dtype=torch.int32)
