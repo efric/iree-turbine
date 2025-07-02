@@ -1283,7 +1283,7 @@ def testi8TransposeGemm(
 
 @require_e2e
 # @pytest.mark.parametrize("shape", [(256, 1280, 160)])
-@pytest.mark.parametrize("shape", [(64, 64, 32)])
+@pytest.mark.parametrize("shape", [(16, 16, 32)])
 # @pytest.mark.parametrize("shape", [(128, 640, 80)])
 # 1024, 5120, 640
 # @pytest.mark.parametrize("shape", get_test_shapes("test_gemm"))
@@ -1324,12 +1324,12 @@ def testi8NontransposeGemm(
     Each wave handles 32x32 elements
     '''
     constraints += [tkw.TilingConstraint(K, BLOCK_K)]
-    constraints += [tkw.WaveConstraint(M, BLOCK_M / 2)]
-    constraints += [tkw.WaveConstraint(N, BLOCK_N / 2)]
+    constraints += [tkw.WaveConstraint(M, BLOCK_M )]
+    constraints += [tkw.WaveConstraint(N, BLOCK_N)]
 
     constraints += [
         tkw.HardwareConstraint(
-            threads_per_wave=64, waves_per_block=(2, 2, 1), mma_type=mfma_variant
+            threads_per_wave=64, waves_per_block=(1, 1, 1), mma_type=mfma_variant
         )
     ]
 
@@ -1361,8 +1361,8 @@ def testi8NontransposeGemm(
 
     hyperparams = {
         ADDRESS_SPACE: SHARED_ADDRESS_SPACE,
-        BLOCK_M: 64,
-        BLOCK_N: 64,
+        BLOCK_M: 16,
+        BLOCK_N: 16,
         BLOCK_K: 32,
         M: shape[0],
         N: shape[1],

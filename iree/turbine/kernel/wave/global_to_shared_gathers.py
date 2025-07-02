@@ -83,6 +83,7 @@ def is_valid_global_gather(node: fx.Node) -> bool:
         and subs_idxc(custom.memory_type.address_space) == GLOBAL_ADDRESS_SPACE
         and has_write_shared_user(custom)
         and is_gather(custom)
+        # and not node.transpose
     )
 
 
@@ -284,7 +285,10 @@ def global_to_shared_gathers(trace: CapturedTrace, constraints: list[Constraint]
     of the loads.
     """
     global_gathers = trace.walk(is_valid_global_gather)
+    # probably want to switch
+    # breakpoint()
     if not global_gathers:
+        # breakpoint()
         return
 
     hardware_constraint = next(
@@ -303,6 +307,7 @@ def global_to_shared_gathers(trace: CapturedTrace, constraints: list[Constraint]
     load_elems_per_thread = hardware_constraint.max_elems_per_load(element_type)
     max_elements_per_load = total_number_of_threads * load_elems_per_thread
 
+    breakpoint()
     optimizable_loads = identify_optimizable_loads(
         global_gathers,
         constraint_tile_size,
@@ -312,6 +317,7 @@ def global_to_shared_gathers(trace: CapturedTrace, constraints: list[Constraint]
         use_memory_type=True,
     )
 
+    breakpoint()
     # Construct new global read nodes and write shared nodes.
     optimized_writes, shared_read_metadata = add_optimized_nodes(
         optimizable_loads,
@@ -319,5 +325,6 @@ def global_to_shared_gathers(trace: CapturedTrace, constraints: list[Constraint]
         hardware_constraint,
     )
 
+    breakpoint()
     # Update all write dependencies.
     update_write_dependencies(optimized_writes, trace, shared_read_metadata)

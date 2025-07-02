@@ -912,6 +912,8 @@ def handle_read(emitter: WaveEmitter, node: fx.Node):
     vector_type = VectorType.get(vector_shape, element_type)
     input_shape = _get_symbolic_shape(memory)
     elements_per_thread = cast_py_literal(emitter, elements_per_thread)
+    # if hasattr(node, "transpose") and node.transpose:
+    #     breakpoint()
     if get_custom(node).has_identity_mapping() or (hasattr(node, "transpose") and node.transpose):
         start_indices, start_indices_wg, start_indices_th = _build_start_indices(
             emitter, index
